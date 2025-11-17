@@ -15,6 +15,7 @@ import * as dayjs from "dayjs";
 import {setPosition} from "../../../util/setPosition";
 import {duplicateNameAddOne} from "../../../util/functions";
 import {Dialog} from "../../../dialog";
+import {showMessage} from "../../../dialog/message";
 import {escapeAriaLabel, escapeAttr, escapeHtml} from "../../../util/escape";
 import {getFieldsByData} from "./view";
 import {hasClosestByClassName} from "../../util/hasClosest";
@@ -698,6 +699,10 @@ export const showColMenu = (protyle: IProtyle, blockElement: Element, cellElemen
     const viewID = blockElement.getAttribute(Constants.CUSTOM_SY_AV_VIEW);
     const oldValue = cellElement.querySelector(".av__celltext").textContent.trim();
     const oldDesc = cellElement.dataset.desc;
+    const isCustomAttrCol = hasClosestByClassName(cellElement, "custom-attr");
+    let currentGaId = cellElement.getAttribute("data-ga-id") || "";
+    const globalAttrLabel = window.siyuan.languages.globalAttr || "Global attribute";
+    const globalAttrDesc = window.siyuan.languages.globalAttrDesc || "Bind this field so it can be reused everywhere";
     const menu = new Menu(Constants.MENU_AV_HEADER_CELL, () => {
         const newValue = (menu.element.querySelector(".b3-text-field") as HTMLInputElement).value;
         if (newValue !== oldValue) {
@@ -980,6 +985,49 @@ export const showColMenu = (protyle: IProtyle, blockElement: Element, cellElemen
                 avID,
                 id: viewID,
             }]);
+        }
+    });
+    menu.addItem({
+        icon: "iconAttr",
+        label: `<div class="fn__flex-column fn__flex-1"><label class="fn__flex fn__pointer"><span>${globalAttrLabel}</span><span class="fn__space fn__flex-1"></span>
+<input type="checkbox" class="b3-switch b3-switch--menu"${currentGaId ? " checked" : ""}></label>
+<small class="ft__on-surface">${escapeHtml(globalAttrDesc)}</small></div>`,
+        bind(element) {
+            const switchElement = element.querySelector(".b3-switch") as HTMLInputElement;
+            switchElement.addEventListener("change", () => {
+                const enabled = switchElement.checked;
+                const payload = {
+                    avID,
+                    keyID: colId,
+                    gaId: currentGaId,
+                    isCustomAttr: isCustomAttrCol,
+                    createIfAbsent: true,
+                    enabled
+                };
+                fetchPost("/api/globalattr/markColumn", payload, (response: IWebSocketData) => {
+                    if (!response || response.code !== 0) {
+                        switchElement.checked = !enabled;
+                        if (response?.msg) {
+                            showMessage(response.msg);
+                        }
+                        return;
+                    }
+                    if (enabled) {
+                        const attr = response.data as {gaId?: string, isCustomAttr?: boolean};
+                        currentGaId = attr?.gaId || currentGaId || "";
+                        cellElement.dataset.gaId = currentGaId;
+                        cellElement.dataset.gaCustom = attr?.isCustomAttr ? "true" : "false";
+                        cellElement.setAttribute("data-ga-id", currentGaId);
+                        cellElement.setAttribute("data-ga-custom", attr?.isCustomAttr ? "true" : "false");
+                    } else {
+                        currentGaId = "";
+                        cellElement.dataset.gaId = "";
+                        cellElement.dataset.gaCustom = "false";
+                        cellElement.setAttribute("data-ga-id", "");
+                        cellElement.setAttribute("data-ga-custom", "false");
+                    }
+                });
+            });
         }
     });
     menu.addItem({

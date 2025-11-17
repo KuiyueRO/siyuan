@@ -24,7 +24,7 @@ import (
 	"github.com/siyuan-note/siyuan/kernel/util"
 )
 
-const CurrentSpec = 4
+const CurrentSpec = 5
 
 func UpgradeSpec(av *AttributeView) {
 	if CurrentSpec <= av.Spec {
@@ -35,6 +35,25 @@ func UpgradeSpec(av *AttributeView) {
 	upgradeSpec2(av)
 	upgradeSpec3(av)
 	upgradeSpec4(av)
+	upgradeSpec5(av)
+}
+
+func upgradeSpec5(av *AttributeView) {
+	if 5 <= av.Spec {
+		return
+	}
+
+	for _, keyValues := range av.KeyValues {
+		if "" == keyValues.Key.GaID {
+			continue
+		}
+
+		if "" == keyValues.Key.ID {
+			keyValues.Key.ID = keyValues.Key.GaID
+		}
+	}
+
+	av.Spec = 5
 }
 
 func upgradeSpec4(av *AttributeView) {

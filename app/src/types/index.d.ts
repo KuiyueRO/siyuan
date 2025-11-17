@@ -964,6 +964,8 @@ interface IAVColumn {
     id: string,
     name: string,
     desc: string,
+    gaId?: string,
+    isCustomAttr?: boolean,
     wrap: boolean,
     pin: boolean,
     hidden: boolean,
@@ -1015,6 +1017,7 @@ interface IAVCellValue {
     keyID?: string,
     id?: string,
     blockID?: string // 为 row id
+    blockRefID?: string,
     type: TAVCol,
     isDetached?: boolean,
     text?: {

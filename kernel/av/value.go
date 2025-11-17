@@ -36,6 +36,7 @@ type Value struct {
 	ID         string  `json:"id,omitempty"`
 	KeyID      string  `json:"keyID,omitempty"`      // 字段 ID
 	BlockID    string  `json:"blockID,omitempty"`    // 项目 ID
+	BlockRefID string  `json:"blockRefID,omitempty"` // 绑定到的块 ID（全局属性继承时使用）
 	Type       KeyType `json:"type,omitempty"`       // 字段类型
 	IsDetached bool    `json:"isDetached,omitempty"` // 是否为非绑定块，注意这个字段只能在主键（KeyTypeBlock）上使用，其他类型的值不要使用
 
