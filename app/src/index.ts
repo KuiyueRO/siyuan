@@ -38,6 +38,7 @@ import {setLocalShorthandCount} from "./util/noRelyPCFunction";
 import {getDockByType} from "./layout/tabUtil";
 import {Tag} from "./layout/dock/Tag";
 import {updateControlAlt} from "./protyle/util/hotKey";
+import {invalidateGlobalAttrCache} from "./protyle/render/av/globalAttr";
 
 export class App {
     public plugins: import("./plugin").Plugin[] = [];
@@ -174,6 +175,9 @@ export class App {
                                 break;
                             case "openFileById":
                                 openFileById({app: this, id: data.data.id, action: [Constants.CB_GET_FOCUS]});
+                                break;
+                            case "refreshGlobalAttrKey":
+                                invalidateGlobalAttrCache();
                                 break;
                         }
                     }

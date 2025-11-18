@@ -39,7 +39,7 @@ import {App} from "../index";
 import {insertHTML} from "./util/insertHTML";
 import {avRender} from "./render/av/render";
 import {focusBlock, getEditorRange} from "./util/selection";
-import {hasClosestBlock} from "./util/hasClosest";
+import {hasClosestBlock, hasClosestByClassName} from "./util/hasClosest";
 import {setStorageVal} from "./util/compatibility";
 import {merge} from "./util/merge";
 /// #if !MOBILE
@@ -151,6 +151,11 @@ export class Protyle {
                                 item.removeAttribute("data-render");
                                 avRender(item, this.protyle);
                             });
+                            break;
+                        case "refreshGlobalAttrKey":
+                            if (data.data?.gaId) {
+                                refreshAttrViewsByGlobalAttr(this.protyle, data.data.gaId);
+                            }
                             break;
                         case "addLoading":
                             if (data.data === this.protyle.block.rootID) {
@@ -518,3 +523,33 @@ export class Protyle {
         renderAVAttribute(element, id, this.protyle, cb);
     }
 }
+
+const refreshAttrViewsByGlobalAttr = (protyle: IProtyle, gaId: string) => {
+    if (!gaId || !protyle?.wysiwyg?.element) {
+        return;
+    }
+    const affectedAvs = new Set<HTMLElement>();
+    protyle.wysiwyg.element.querySelectorAll<HTMLElement>(`.av__row--header .av__cell[data-ga-id="${gaId}"]`).forEach((header) => {
+        const avElement = hasClosestByClassName(header, "av");
+        if (avElement) {
+            affectedAvs.add(avElement as HTMLElement);
+        }
+    });
+    affectedAvs.forEach((avElement) => {
+        avElement.removeAttribute("data-render");
+        avRender(avElement, protyle);
+        refreshAttrDialogByAvID(avElement.getAttribute("data-av-id") || "", protyle);
+    });
+    if (!affectedAvs.size) {
+        refreshAttrDialogByAvID("", protyle);
+    }
+};
+
+const refreshAttrDialogByAvID = (avID: string, protyle: IProtyle) => {
+    const selector = avID ? `[data-av-id="${avID}"]` : "[data-av-id]";
+    document.querySelectorAll(`.b3-dialog--open[data-key="${Constants.DIALOG_ATTR}"] .custom-attr > ${selector}`).forEach(item => {
+        const attrElement = item as HTMLElement;
+        attrElement.removeAttribute("data-rendering");
+        renderAVAttribute(attrElement.parentElement as HTMLElement, attrElement.dataset.nodeId, protyle);
+    });
+};

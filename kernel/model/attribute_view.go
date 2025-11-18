@@ -5103,7 +5103,21 @@ func syncGlobalAttrKey(key *av.Key) error {
 func persistGlobalAttrKey(key *av.Key) {
 	if err := syncGlobalAttrKey(key); err != nil {
 		logging.LogWarnf("sync global attr key failed: %s", err)
+		return
 	}
+	pushGlobalAttrKeyChanged(key)
+}
+
+func pushGlobalAttrKeyChanged(key *av.Key) {
+	if key == nil || key.GaID == "" {
+		return
+	}
+	if builtinGlobalAttrByID(key.GaID) != nil {
+		return
+	}
+	payload := map[string]string{"gaId": key.GaID}
+	util.BroadcastByType("main", "refreshGlobalAttrKey", 0, "", payload)
+	util.BroadcastByType("protyle", "refreshGlobalAttrKey", 0, "", payload)
 }
 
 func clearGlobalAttrBindings(attrView *av.AttributeView, blockID string) {
