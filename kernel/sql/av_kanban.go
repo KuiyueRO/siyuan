@@ -59,6 +59,8 @@ func RenderAttributeViewKanban(attrView *av.AttributeView, view *av.View, query 
 				Date:         key.Date,
 				Created:      key.Created,
 				Updated:      key.Updated,
+				GaID:         key.GaID,
+				IsCustomAttr: key.IsCustomAttr,
 			},
 		})
 	}

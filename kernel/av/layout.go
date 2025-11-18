@@ -142,14 +142,16 @@ func (baseInstance *BaseInstance) GetID() string {
 
 // BaseInstanceField 描述了实例字段的基础结构。
 type BaseInstanceField struct {
-	ID     string     `json:"id"`     // ID
-	Name   string     `json:"name"`   // 名称
-	Type   KeyType    `json:"type"`   // 类型
-	Icon   string     `json:"icon"`   // 图标
-	Wrap   bool       `json:"wrap"`   // 是否换行
-	Hidden bool       `json:"hidden"` // 是否隐藏
-	Desc   string     `json:"desc"`   // 描述
-	Calc   *FieldCalc `json:"calc"`   // 计算规则和结果
+	ID           string     `json:"id"`     // ID
+	Name         string     `json:"name"`   // 名称
+	Type         KeyType    `json:"type"`   // 类型
+	Icon         string     `json:"icon"`   // 图标
+	Wrap         bool       `json:"wrap"`   // 是否换行
+	Hidden       bool       `json:"hidden"` // 是否隐藏
+	Desc         string     `json:"desc"`   // 描述
+	Calc         *FieldCalc `json:"calc"`   // 计算规则和结果
+	GaID         string     `json:"gaId,omitempty"`
+	IsCustomAttr bool       `json:"isCustomAttr,omitempty"`
 
 	// 以下是某些字段类型的特有属性
 

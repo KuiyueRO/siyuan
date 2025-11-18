@@ -166,6 +166,38 @@ func NewKey(id, name, icon string, keyType KeyType) *Key {
 	}
 }
 
+// Clone returns a deep copy of the key.
+func (k *Key) Clone() *Key {
+	if k == nil {
+		return nil
+	}
+	data, err := gulu.JSON.MarshalJSON(k)
+	if err != nil {
+		return nil
+	}
+	clone := &Key{}
+	if err = gulu.JSON.UnmarshalJSON(data, clone); err != nil {
+		return nil
+	}
+	return clone
+}
+
+// applyGlobalKey overwrites the local key definition using the provided source while keeping binding metadata.
+func (k *Key) applyGlobalKey(src *Key) {
+	if k == nil || src == nil {
+		return
+	}
+	backupID, backupGaID, backupCustom := k.ID, k.GaID, k.IsCustomAttr
+	clone := src.Clone()
+	if clone == nil {
+		return
+	}
+	clone.ID = backupID
+	clone.GaID = backupGaID
+	clone.IsCustomAttr = backupCustom
+	*k = *clone
+}
+
 func (k *Key) GetOption(name string) (ret *SelectOption) {
 	for _, option := range k.Options {
 		if option.Name == name {
@@ -521,6 +553,8 @@ func ParseAttributeView(avID string) (ret *AttributeView, err error) {
 			return
 		}
 	}
+
+	ret.hydrateGlobalAttributes()
 	return
 }
 
@@ -531,7 +565,11 @@ func SaveAttributeView(av *AttributeView) (err error) {
 		return
 	}
 
+	restore := shrinkGlobalAttrPayload(av)
+	defer restore()
+
 	// 做一些数据兼容和订正处理
+
 	UpgradeSpec(av)
 
 	// 值去重
@@ -595,6 +633,166 @@ func SaveAttributeView(av *AttributeView) (err error) {
 		util.PushErrMsg(msg, 7000)
 	}
 	return
+}
+
+func (attrView *AttributeView) hydrateGlobalAttributes() {
+	if attrView == nil {
+		return
+	}
+
+	cache := map[string]*GlobalAttribute{}
+	for _, keyValues := range attrView.KeyValues {
+		if keyValues.Key == nil || keyValues.Key.GaID == "" {
+			continue
+		}
+
+		gaAttr, ok := cache[keyValues.Key.GaID]
+		if !ok {
+			gaAttr, _ = ParseGlobalAttribute(keyValues.Key.GaID)
+			cache[keyValues.Key.GaID] = gaAttr
+		}
+		if gaAttr == nil {
+			continue
+		}
+
+		if gaAttr.Key != nil {
+			keyValues.Key.applyGlobalKey(gaAttr.Key)
+		}
+
+		if len(gaAttr.Values) < 1 {
+			continue
+		}
+
+		valueMap := map[string]*Value{}
+		for _, v := range gaAttr.Values {
+			if v.BlockRefID != "" {
+				valueMap[v.BlockRefID] = v
+			}
+		}
+
+		for idx, val := range keyValues.Values {
+			if val == nil || val.BlockRefID == "" {
+				continue
+			}
+			if gaVal, ok := valueMap[val.BlockRefID]; ok {
+				clone := gaVal.Clone()
+				if clone == nil {
+					continue
+				}
+				clone.ID = val.ID
+				clone.KeyID = val.KeyID
+				clone.BlockID = val.BlockID
+				clone.BlockRefID = val.BlockRefID
+				keyValues.Values[idx] = clone
+			}
+		}
+	}
+}
+
+func shrinkGlobalAttrPayload(attrView *AttributeView) func() {
+	if attrView == nil {
+		return func() {}
+	}
+
+	type keySnapshot struct {
+		target *Key
+		backup *Key
+	}
+	type valueSnapshot struct {
+		target *Value
+		backup *Value
+	}
+
+	var keySnaps []keySnapshot
+	var valueSnaps []valueSnapshot
+
+	blockMap := map[string]*Value{}
+	if blockKv := attrView.GetBlockKeyValues(); blockKv != nil {
+		for _, v := range blockKv.Values {
+			blockMap[v.BlockID] = v
+		}
+	}
+
+	for _, keyValues := range attrView.KeyValues {
+		if keyValues.Key == nil || keyValues.Key.GaID == "" {
+			continue
+		}
+
+		if backup := keyValues.Key.Clone(); backup != nil {
+			keySnaps = append(keySnaps, keySnapshot{target: keyValues.Key, backup: backup})
+			minimizeGlobalKey(keyValues.Key)
+		}
+
+		for _, val := range keyValues.Values {
+			if val == nil {
+				continue
+			}
+			if blockVal, ok := blockMap[val.BlockID]; ok && blockVal != nil && !blockVal.IsDetached && blockVal.Block != nil {
+				val.BlockRefID = blockVal.Block.ID
+			} else {
+				val.BlockRefID = ""
+			}
+			if val.BlockRefID == "" {
+				continue
+			}
+			if backup := val.Clone(); backup != nil {
+				valueSnaps = append(valueSnaps, valueSnapshot{target: val, backup: backup})
+				minimizeGlobalValue(val)
+			}
+		}
+	}
+
+	if len(keySnaps) == 0 && len(valueSnaps) == 0 {
+		return func() {}
+	}
+
+	return func() {
+		for _, snap := range valueSnaps {
+			*snap.target = *snap.backup
+		}
+		for _, snap := range keySnaps {
+			*snap.target = *snap.backup
+		}
+	}
+}
+
+func minimizeGlobalKey(key *Key) {
+	if key == nil {
+		return
+	}
+	key.Name = ""
+	key.Icon = ""
+	key.Desc = ""
+	key.Type = ""
+	key.Options = nil
+	key.NumberFormat = ""
+	key.Template = ""
+	key.Relation = nil
+	key.Rollup = nil
+	key.Date = nil
+	key.Created = nil
+	key.Updated = nil
+}
+
+func minimizeGlobalValue(val *Value) {
+	if val == nil {
+		return
+	}
+	val.Block = nil
+	val.Text = nil
+	val.Number = nil
+	val.Date = nil
+	val.MSelect = nil
+	val.URL = nil
+	val.Email = nil
+	val.Phone = nil
+	val.MAsset = nil
+	val.Template = nil
+	val.Created = nil
+	val.Updated = nil
+	val.Checkbox = nil
+	val.Relation = nil
+	val.Rollup = nil
 }
 
 func (av *AttributeView) GetView(viewID string) (ret *View) {

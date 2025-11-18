@@ -62,6 +62,8 @@ func RenderAttributeViewTable(attrView *av.AttributeView, view *av.View, query s
 				Date:         key.Date,
 				Created:      key.Created,
 				Updated:      key.Updated,
+				GaID:         key.GaID,
+				IsCustomAttr: key.IsCustomAttr,
 			},
 			Width: col.Width,
 			Pin:   col.Pin,

@@ -18,6 +18,7 @@ package model
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"math/rand"
 	"os"
@@ -2095,6 +2096,7 @@ func setAttributeViewColDateFillCreated(operation *Operation) (err error) {
 	}
 
 	key.Date.AutoFillNow = operation.Data.(bool)
+	persistGlobalAttrKey(key)
 	err = av.SaveAttributeView(attrView)
 	return
 }
@@ -2134,6 +2136,7 @@ func setAttrViewColDateFillSpecificTime(operation *Operation) (err error) {
 		v.Date.IsNotTime = !dateValues.Key.Date.FillSpecificTime
 	}
 
+	persistGlobalAttrKey(dateValues.Key)
 	err = av.SaveAttributeView(attrView)
 	return
 }
@@ -2162,6 +2165,7 @@ func setAttrViewCreatedIncludeTime(operation *Operation) (err error) {
 	}
 
 	key.Created.IncludeTime = operation.Data.(bool)
+	persistGlobalAttrKey(key)
 	err = av.SaveAttributeView(attrView)
 	return
 }
@@ -2190,6 +2194,7 @@ func setAttrViewUpdatedIncludeTime(operation *Operation) (err error) {
 	}
 
 	key.Updated.IncludeTime = operation.Data.(bool)
+	persistGlobalAttrKey(key)
 	err = av.SaveAttributeView(attrView)
 	return
 }
@@ -2278,6 +2283,7 @@ func updateAttributeViewColRollup(operation *Operation) (err error) {
 		}
 	}
 
+	persistGlobalAttrKey(rollUpKey)
 	err = av.SaveAttributeView(attrView)
 	return
 }
@@ -2359,6 +2365,7 @@ func updateAttributeViewColRelation(operation *Operation) (err error) {
 		}
 		keyValues.Key.Relation = srcRel
 		keyValues.Key.Name = operation.Format
+		persistGlobalAttrKey(keyValues.Key)
 
 		break
 	}
@@ -2381,6 +2388,7 @@ func updateAttributeViewColRelation(operation *Operation) (err error) {
 		} else {
 			backRelKey.Relation.BackKeyID = ""
 		}
+		persistGlobalAttrKey(backRelKey)
 	}
 
 	if !destAdded && operation.IsTwoWay {
@@ -2400,6 +2408,7 @@ func updateAttributeViewColRelation(operation *Operation) (err error) {
 			},
 		}
 		destAv.KeyValues = append(destAv.KeyValues, destKeyValues)
+		persistGlobalAttrKey(destKeyValues.Key)
 
 		for _, v := range destAv.Views {
 			switch v.LayoutType {
@@ -3871,6 +3880,7 @@ func setAttributeViewColIcon(operation *Operation) (err error) {
 	for _, keyValues := range attrView.KeyValues {
 		if keyValues.Key.ID == operation.ID {
 			keyValues.Key.Icon = operation.Data.(string)
+			persistGlobalAttrKey(keyValues.Key)
 			break
 		}
 	}
@@ -3896,6 +3906,7 @@ func setAttributeViewColDesc(operation *Operation) (err error) {
 	for _, keyValues := range attrView.KeyValues {
 		if keyValues.Key.ID == operation.ID {
 			keyValues.Key.Desc = operation.Data.(string)
+			persistGlobalAttrKey(keyValues.Key)
 			break
 		}
 	}
@@ -4305,6 +4316,7 @@ func updateAttributeViewColTemplate(operation *Operation) (err error) {
 		for _, keyValues := range attrView.KeyValues {
 			if keyValues.Key.ID == operation.ID && av.KeyTypeTemplate == keyValues.Key.Type {
 				keyValues.Key.Template = operation.Data.(string)
+				persistGlobalAttrKey(keyValues.Key)
 				break
 			}
 		}
@@ -4335,6 +4347,7 @@ func updateAttributeViewColNumberFormat(operation *Operation) (err error) {
 		for _, keyValues := range attrView.KeyValues {
 			if keyValues.Key.ID == operation.ID && av.KeyTypeNumber == keyValues.Key.Type {
 				keyValues.Key.NumberFormat = av.NumberFormat(operation.Format)
+				persistGlobalAttrKey(keyValues.Key)
 				break
 			}
 		}
@@ -4360,6 +4373,7 @@ func updateAttributeViewColumn(operation *Operation) (err error) {
 
 	colType := av.KeyType(operation.Typ)
 	changeType := false
+	var mutatedKey *av.Key
 	switch colType {
 	case av.KeyTypeBlock, av.KeyTypeText, av.KeyTypeNumber, av.KeyTypeDate, av.KeyTypeSelect, av.KeyTypeMSelect, av.KeyTypeURL, av.KeyTypeEmail,
 		av.KeyTypePhone, av.KeyTypeMAsset, av.KeyTypeTemplate, av.KeyTypeCreated, av.KeyTypeUpdated, av.KeyTypeCheckbox,
@@ -4370,6 +4384,7 @@ func updateAttributeViewColumn(operation *Operation) (err error) {
 
 				changeType = keyValues.Key.Type != colType
 				keyValues.Key.Type = colType
+				mutatedKey = keyValues.Key
 
 				for _, value := range keyValues.Values {
 					value.Type = colType
@@ -4379,6 +4394,7 @@ func updateAttributeViewColumn(operation *Operation) (err error) {
 			}
 		}
 	}
+	persistGlobalAttrKey(mutatedKey)
 
 	if changeType {
 		for _, view := range attrView.Views {
@@ -4874,6 +4890,7 @@ func updateAttributeViewValue(tx *Transaction, attrView *av.AttributeView, keyID
 			if val.IsDetached { // 现在是非绑定块
 				unbindBlockAv(tx, avID, val.Block.ID)
 				val.Block.ID = ""
+				clearGlobalAttrBindings(attrView, oldBoundBlockID)
 			} else {
 				// 现在也绑定了块
 
@@ -4882,6 +4899,7 @@ func updateAttributeViewValue(tx *Transaction, attrView *av.AttributeView, keyID
 					unbindBlockAv(tx, avID, oldBoundBlockID)
 					bindBlockAv(tx, avID, val.Block.ID)
 					val.Block.Content = util.UnescapeHTML(val.Block.Content)
+					clearGlobalAttrBindings(attrView, oldBoundBlockID)
 				} else { // 之前绑定的块和现在绑定的块一样
 					content := strings.TrimSpace(val.Block.Content)
 					node, tree, _ := getNodeByBlockID(tx, val.Block.ID)
@@ -4911,6 +4929,10 @@ func updateAttributeViewValue(tx *Transaction, attrView *av.AttributeView, keyID
 	if nil != key && av.KeyTypeRelation == key.Type && nil != key.Relation && key.Relation.IsTwoWay {
 		// 双向关联需要同时更新目标字段的值
 		updateTwoWayRelationDestAttrView(attrView, key, val, relationChangeMode, oldRelationBlockIDs)
+	}
+
+	if syncErr := syncGlobalAttrValue(key, val, blockVal); nil != syncErr {
+		logging.LogWarnf("sync global attr value failed: %s", syncErr)
 	}
 
 	regenAttrViewGroups(attrView)
@@ -5002,6 +5024,119 @@ func updateTwoWayRelationDestAttrView(attrView *av.AttributeView, relKey *av.Key
 	if destAv != attrView {
 		regenAttrViewGroups(destAv)
 		av.SaveAttributeView(destAv)
+	}
+}
+
+func syncGlobalAttrValue(key *av.Key, val *av.Value, blockVal *av.Value) error {
+	if key == nil || key.GaID == "" || val == nil {
+		return nil
+	}
+
+	attr, err := av.ParseGlobalAttribute(key.GaID)
+	if err != nil {
+		if errors.Is(err, av.ErrGlobalAttrNotFound) {
+			attr = &av.GlobalAttribute{Key: key.Clone()}
+		} else {
+			return err
+		}
+	}
+
+	blockID := getBoundBlockID(blockVal)
+	if blockID == "" {
+		prev := val.BlockRefID
+		val.BlockRefID = ""
+		if prev == "" || attr == nil {
+			return nil
+		}
+		if attr.RemoveValue(prev) {
+			return av.SaveGlobalAttribute(attr)
+		}
+		return nil
+	}
+
+	val.BlockRefID = blockID
+	if attr == nil {
+		attr = &av.GlobalAttribute{Key: key.Clone()}
+	}
+	attr.UpsertValue(blockID, val)
+	return av.SaveGlobalAttribute(attr)
+}
+
+func syncGlobalAttrKey(key *av.Key) error {
+	if key == nil || key.GaID == "" {
+		return nil
+	}
+	if builtinGlobalAttrByID(key.GaID) != nil {
+		return nil
+	}
+
+	attr, err := av.ParseGlobalAttribute(key.GaID)
+	if err != nil {
+		if errors.Is(err, av.ErrGlobalAttrNotFound) {
+			attr = &av.GlobalAttribute{}
+		} else {
+			return err
+		}
+	}
+
+	cloned := key.Clone()
+	if cloned == nil {
+		return errors.New("clone global attribute key failed")
+	}
+	gaID := key.GaID
+	if gaID == "" {
+		gaID = key.ID
+	}
+	if gaID == "" {
+		return errors.New("global attribute id is empty")
+	}
+	cloned.ID = gaID
+	cloned.GaID = gaID
+
+	if attr == nil {
+		attr = &av.GlobalAttribute{}
+	}
+	attr.Key = cloned
+	return av.SaveGlobalAttribute(attr)
+}
+
+func persistGlobalAttrKey(key *av.Key) {
+	if err := syncGlobalAttrKey(key); err != nil {
+		logging.LogWarnf("sync global attr key failed: %s", err)
+	}
+}
+
+func clearGlobalAttrBindings(attrView *av.AttributeView, blockID string) {
+	if attrView == nil || blockID == "" {
+		return
+	}
+
+	for _, keyValues := range attrView.KeyValues {
+		if keyValues.Key == nil || keyValues.Key.GaID == "" {
+			continue
+		}
+
+		needSave := false
+		for _, val := range keyValues.Values {
+			if val != nil && val.BlockRefID == blockID {
+				val.BlockRefID = ""
+				needSave = true
+			}
+		}
+
+		if !needSave {
+			continue
+		}
+
+		attr, err := av.ParseGlobalAttribute(keyValues.Key.GaID)
+		if err != nil {
+			continue
+		}
+		if attr.RemoveValue(blockID) {
+			if err = av.SaveGlobalAttribute(attr); err != nil {
+				logging.LogWarnf("remove global attr value failed: %s", err)
+			}
+		}
 	}
 }
 
@@ -5202,6 +5337,8 @@ func updateAttributeViewColumnOptions(operation *Operation) (err error) {
 		})
 	}
 
+	persistGlobalAttrKey(selectKey)
+
 	regenAttrViewGroups(attrView)
 	err = av.SaveAttributeView(attrView)
 	return
@@ -5286,6 +5423,7 @@ func removeAttributeViewColumnOption(operation *Operation) (err error) {
 		}
 	}
 
+	persistGlobalAttrKey(key)
 	regenAttrViewGroups(attrView)
 	err = av.SaveAttributeView(attrView)
 	return
@@ -5405,6 +5543,7 @@ func updateAttributeViewColumnOption(operation *Operation) (err error) {
 		}
 	}
 
+	persistGlobalAttrKey(key)
 	regenAttrViewGroups(attrView)
 	err = av.SaveAttributeView(attrView)
 	return
@@ -5440,6 +5579,7 @@ func setAttributeViewColumnOptionDesc(operation *Operation) (err error) {
 		}
 	}
 
+	persistGlobalAttrKey(key)
 	err = av.SaveAttributeView(attrView)
 	return
 }

@@ -24,7 +24,6 @@ import (
 	"github.com/88250/lute/ast"
 	"github.com/siyuan-note/logging"
 	"github.com/siyuan-note/siyuan/kernel/av"
-	"github.com/siyuan-note/siyuan/kernel/globalattr"
 )
 
 // GlobalAttr 描述了后端向前端返回的全局属性元信息。
@@ -65,7 +64,7 @@ type MarkGlobalAttrReq struct {
 
 // ListGlobalAttrs 返回全部全局属性的概览。
 func ListGlobalAttrs() ([]*GlobalAttr, error) {
-	attrs, err := globalattr.ListAttributes()
+	attrs, err := av.ListGlobalAttributes()
 	if nil != err {
 		return nil, err
 	}
@@ -117,8 +116,8 @@ func CreateGlobalAttr(req *CreateGlobalAttrReq) (*GlobalAttr, error) {
 		IsCustomAttr: req.IsCustomAttr,
 	}
 
-	attr := &globalattr.Attribute{Key: key}
-	if err = globalattr.Save(attr); nil != err {
+	attr := &av.GlobalAttribute{Key: key}
+	if err = av.SaveGlobalAttribute(attr); nil != err {
 		return nil, err
 	}
 	return convertAttribute(attr), nil
@@ -161,9 +160,9 @@ func MarkAttrViewColumnAsGlobal(req *MarkGlobalAttrReq) (*GlobalAttr, error) {
 		return builtin, nil
 	}
 
-	var attr *globalattr.Attribute
+	var attr *av.GlobalAttribute
 	if "" != req.GaID {
-		attr, err = globalattr.Parse(req.GaID)
+		attr, err = av.ParseGlobalAttribute(req.GaID)
 		if nil != err && !req.CreateIfAbsent {
 			return nil, err
 		}
@@ -178,20 +177,23 @@ func MarkAttrViewColumnAsGlobal(req *MarkGlobalAttrReq) (*GlobalAttr, error) {
 			attr.Key.ID = req.GaID
 			attr.Key.GaID = req.GaID
 		}
-		if err = globalattr.Save(attr); nil != err {
+		if err = av.SaveGlobalAttribute(attr); nil != err {
 			return nil, err
 		}
 	}
 
 	if attr.Key.IsCustomAttr != req.IsCustomAttr {
 		attr.Key.IsCustomAttr = req.IsCustomAttr
-		if err = globalattr.Save(attr); nil != err {
+		if err = av.SaveGlobalAttribute(attr); nil != err {
 			logging.LogWarnf("update global attribute [%s] custom flag failed: %s", attr.ID(), err)
 		}
 	}
 
 	keyValues.Key.GaID = attr.ID()
 	keyValues.Key.IsCustomAttr = req.IsCustomAttr
+	if err = ensureGlobalAttrColumnBindings(attrView, keyValues, attr); nil != err {
+		return nil, err
+	}
 
 	if err = av.SaveAttributeView(attrView); nil != err {
 		return nil, err
@@ -199,7 +201,7 @@ func MarkAttrViewColumnAsGlobal(req *MarkGlobalAttrReq) (*GlobalAttr, error) {
 	return convertAttribute(attr), nil
 }
 
-func convertAttribute(attr *globalattr.Attribute) *GlobalAttr {
+func convertAttribute(attr *av.GlobalAttribute) *GlobalAttr {
 	if nil == attr || nil == attr.Key {
 		return nil
 	}
@@ -216,7 +218,7 @@ func convertAttribute(attr *globalattr.Attribute) *GlobalAttr {
 	}
 }
 
-func cloneAttrFromKey(source *av.Key, isCustom bool) (*globalattr.Attribute, error) {
+func cloneAttrFromKey(source *av.Key, isCustom bool) (*av.GlobalAttribute, error) {
 	if nil == source {
 		return nil, errors.New("nil key")
 	}
@@ -235,7 +237,50 @@ func cloneAttrFromKey(source *av.Key, isCustom bool) (*globalattr.Attribute, err
 	cloned.GaID = gaID
 	cloned.IsCustomAttr = isCustom
 
-	return &globalattr.Attribute{Key: cloned}, nil
+	return &av.GlobalAttribute{Key: cloned}, nil
+}
+
+func ensureGlobalAttrColumnBindings(attrView *av.AttributeView, keyValues *av.KeyValues, attr *av.GlobalAttribute) error {
+	if attrView == nil || keyValues == nil || attr == nil {
+		return nil
+	}
+
+	blockMap := map[string]*av.Value{}
+	if blockKeyValues := attrView.GetBlockKeyValues(); blockKeyValues != nil {
+		for _, blockVal := range blockKeyValues.Values {
+			blockMap[blockVal.BlockID] = blockVal
+		}
+	}
+
+	var changed bool
+	for _, val := range keyValues.Values {
+		if val == nil {
+			continue
+		}
+		blockVal := blockMap[val.BlockID]
+		blockID := getBoundBlockID(blockVal)
+		if blockID == "" {
+			val.BlockRefID = ""
+			continue
+		}
+		if val.BlockRefID != blockID {
+			val.BlockRefID = blockID
+		}
+		attr.UpsertValue(blockID, val)
+		changed = true
+	}
+
+	if !changed {
+		return nil
+	}
+	return av.SaveGlobalAttribute(attr)
+}
+
+func getBoundBlockID(blockVal *av.Value) string {
+	if blockVal == nil || blockVal.IsDetached || blockVal.Block == nil {
+		return ""
+	}
+	return blockVal.Block.ID
 }
 
 func normalizeKeyType(raw string) (av.KeyType, error) {
