@@ -111,6 +111,35 @@ func renderView(attrView *av.AttributeView, view *av.View, query string, depth *
 	return
 }
 
+func getClonedGlobalAttrValues(attrView *av.AttributeView, gaID string, cache map[string][]*av.Value) []*av.Value {
+	if attrView == nil || gaID == "" {
+		return nil
+	}
+	if cache != nil {
+		if cached, ok := cache[gaID]; ok {
+			return cached
+		}
+	}
+
+	var cloned []*av.Value
+	if attr := attrView.GetGlobalAttribute(gaID); attr != nil && len(attr.Values) > 0 {
+		cloned = make([]*av.Value, 0, len(attr.Values))
+		for _, val := range attr.Values {
+			if val == nil {
+				continue
+			}
+			if c := val.Clone(); c != nil {
+				cloned = append(cloned, c)
+			}
+		}
+	}
+
+	if cache != nil {
+		cache[gaID] = cloned
+	}
+	return cloned
+}
+
 func renderTemplateField(ial map[string]string, keyValues []*av.KeyValues, tplContent string) (ret string, err error) {
 	if "" == ial["id"] {
 		block := getBlockValue(keyValues)

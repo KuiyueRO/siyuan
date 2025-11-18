@@ -152,6 +152,7 @@ type BaseInstanceField struct {
 	Calc         *FieldCalc `json:"calc"`   // 计算规则和结果
 	GaID         string     `json:"gaId,omitempty"`
 	IsCustomAttr bool       `json:"isCustomAttr,omitempty"`
+	GaValues     []*Value   `json:"gaValues,omitempty"` // 绑定 GA 的可选值
 
 	// 以下是某些字段类型的特有属性
 

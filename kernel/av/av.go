@@ -43,7 +43,8 @@ type AttributeView struct {
 	ViewID    string       `json:"viewID"`    // 当前视图 ID
 	Views     []*View      `json:"views"`     // 视图
 
-	RenderedViewables map[string]Viewable `json:"-"` // 已经渲染好的视图
+	RenderedViewables map[string]Viewable         `json:"-"` // 已经渲染好的视图
+	globalAttrCache   map[string]*GlobalAttribute `json:"-"`
 }
 
 // KeyValues 描述了属性视图属性键值列表的结构。
@@ -640,7 +641,15 @@ func (attrView *AttributeView) hydrateGlobalAttributes() {
 		return
 	}
 
-	cache := map[string]*GlobalAttribute{}
+	if attrView.globalAttrCache == nil {
+		attrView.globalAttrCache = map[string]*GlobalAttribute{}
+	} else {
+		for k := range attrView.globalAttrCache {
+			delete(attrView.globalAttrCache, k)
+		}
+	}
+
+	cache := attrView.globalAttrCache
 	for _, keyValues := range attrView.KeyValues {
 		if keyValues.Key == nil || keyValues.Key.GaID == "" {
 			continue
@@ -687,6 +696,33 @@ func (attrView *AttributeView) hydrateGlobalAttributes() {
 			}
 		}
 	}
+}
+
+func (attrView *AttributeView) getGlobalAttrCache() map[string]*GlobalAttribute {
+	if attrView == nil {
+		return nil
+	}
+	return attrView.globalAttrCache
+}
+
+// GetGlobalAttribute returns the hydrated global attribute metadata for the given gaID if present.
+func (attrView *AttributeView) GetGlobalAttribute(gaID string) *GlobalAttribute {
+	if attrView == nil || gaID == "" {
+		return nil
+	}
+	cache := attrView.getGlobalAttrCache()
+	if cache == nil {
+		return nil
+	}
+	return cache[gaID]
+}
+
+// GetGlobalAttrValues returns the hydrated global attribute values for the given gaID.
+func (attrView *AttributeView) GetGlobalAttrValues(gaID string) []*Value {
+	if attr := attrView.GetGlobalAttribute(gaID); attr != nil {
+		return attr.Values
+	}
+	return nil
 }
 
 func shrinkGlobalAttrPayload(attrView *AttributeView) func() {

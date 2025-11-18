@@ -15,6 +15,34 @@ import {Constants} from "../../../constants";
 
 let cellValues: IAVCellValue[];
 
+const AUTO_COLOR_STEPS = 14;
+
+export const getGAEnhancedOptions = (column: IAVColumn) => {
+    const options = column.options ? column.options.map(option => ({...option})) : [];
+    if (!column.gaValues || column.gaValues.length === 0) {
+        return options;
+    }
+    const seen = new Set(options.map(item => item.name));
+    let colorCursor = options.length;
+    column.gaValues.forEach(value => {
+        value?.mSelect?.forEach(selectItem => {
+            const name = selectItem.content?.trim();
+            if (!name || seen.has(name)) {
+                return;
+            }
+            const color = selectItem.color || ((colorCursor % AUTO_COLOR_STEPS) + 1).toString();
+            options.push({
+                name,
+                color,
+                desc: selectItem.desc || ""
+            });
+            seen.add(name);
+            colorCursor++;
+        });
+    });
+    return options;
+};
+
 const filterSelectHTML = (key: string, options: {
     name: string,
     color: string,
@@ -475,15 +503,16 @@ export const bindSelectEvent = (protyle: IProtyle, data: IAV, menuElement: HTMLE
     if (!colData.options) {
         colData.options = [];
     }
+    const optionPool = getGAEnhancedOptions(colData);
     const listElement = menuElement.lastElementChild.lastElementChild as HTMLElement;
     inputElement.addEventListener("input", (event: InputEvent) => {
         if (event.isComposing) {
             return;
         }
-        listElement.innerHTML = filterSelectHTML(inputElement.value, colData.options);
+        listElement.innerHTML = filterSelectHTML(inputElement.value, optionPool);
     });
     inputElement.addEventListener("compositionend", () => {
-        listElement.innerHTML = filterSelectHTML(inputElement.value, colData.options);
+        listElement.innerHTML = filterSelectHTML(inputElement.value, optionPool);
     });
     inputElement.addEventListener("keydown", (event: KeyboardEvent) => {
         if (event.isComposing) {
@@ -659,6 +688,7 @@ export const getSelectHTML = (fields: IAVColumn[], cellElements: HTMLElement[], 
             return item;
         }
     });
+    const optionPool = getGAEnhancedOptions(colData);
     let selectedHTML = "";
     const selected: string[] = [];
     cellValues[0].mSelect?.forEach((item) => {
@@ -671,7 +701,7 @@ export const getSelectHTML = (fields: IAVColumn[], cellElements: HTMLElement[], 
     ${selectedHTML}
     <input>
 </div>
-<div>${filterSelectHTML("", colData.options, selected)}</div>
+<div>${filterSelectHTML("", optionPool, selected)}</div>
 </div>`;
 };
 

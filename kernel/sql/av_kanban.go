@@ -32,6 +32,8 @@ func RenderAttributeViewKanban(attrView *av.AttributeView, view *av.View, query 
 		Cards:                  []*av.KanbanCard{},
 	}
 
+	gaValuesCache := map[string][]*av.Value{}
+
 	// 组装字段
 	for _, field := range view.Kanban.Fields {
 		key, getErr := attrView.GetKey(field.ID)
@@ -61,6 +63,7 @@ func RenderAttributeViewKanban(attrView *av.AttributeView, view *av.View, query 
 				Updated:      key.Updated,
 				GaID:         key.GaID,
 				IsCustomAttr: key.IsCustomAttr,
+				GaValues:     getClonedGlobalAttrValues(attrView, key.GaID, gaValuesCache),
 			},
 		})
 	}

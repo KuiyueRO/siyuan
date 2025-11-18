@@ -966,6 +966,7 @@ interface IAVColumn {
     desc: string,
     gaId?: string,
     isCustomAttr?: boolean,
+    gaValues?: IAVCellValue[],
     wrap: boolean,
     pin: boolean,
     hidden: boolean,

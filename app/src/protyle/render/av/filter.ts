@@ -13,6 +13,7 @@ import {showMessage} from "../../../dialog/message";
 import {upDownHint} from "../../../util/upDownHint";
 import {getFieldsByData} from "./view";
 import {Constants} from "../../../constants";
+import {getGAEnhancedOptions} from "./select";
 
 export const getDefaultOperatorByType = (type: TAVCol) => {
     if (["select", "number", "date", "created", "updated"].includes(type)) {
@@ -211,6 +212,7 @@ export const setFilter = async (options: {
             return true;
         }
     });
+    const optionPool = getGAEnhancedOptions(colData);
     let filterValue: IAVCellValue = JSON.parse(JSON.stringify(options.filter.value));
     if (colData.type === "rollup") {
         if (!colData.rollup || !colData.rollup.relationKeyID || !colData.rollup.keyID) {
@@ -373,7 +375,7 @@ export const setFilter = async (options: {
         label: `<select style="margin: 4px 0" class="b3-select fn__size200" data-type="operation">${selectHTML}</select>`
     });
     if (filterValue.type === "select" || filterValue.type === "mSelect") {
-        if (colData.options?.length > 0) {
+        if (optionPool.length > 0) {
             menu.addItem({
                 iconHTML: "",
                 type: "readonly",
@@ -404,7 +406,7 @@ export const setFilter = async (options: {
                 }
             });
         }
-        colData.options?.forEach((option) => {
+        optionPool.forEach((option) => {
             let icon = "iconUncheck";
             filterValue?.mSelect?.find((optionItem: IAVCellSelectValue) => {
                 if (optionItem.content === option.name) {

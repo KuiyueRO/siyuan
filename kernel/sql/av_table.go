@@ -35,6 +35,8 @@ func RenderAttributeViewTable(attrView *av.AttributeView, view *av.View, query s
 		Rows:         []*av.TableRow{},
 	}
 
+	gaValuesCache := map[string][]*av.Value{}
+
 	// 组装列
 	for _, col := range view.Table.Columns {
 		key, getErr := attrView.GetKey(col.ID)
@@ -64,6 +66,7 @@ func RenderAttributeViewTable(attrView *av.AttributeView, view *av.View, query s
 				Updated:      key.Updated,
 				GaID:         key.GaID,
 				IsCustomAttr: key.IsCustomAttr,
+				GaValues:     getClonedGlobalAttrValues(attrView, key.GaID, gaValuesCache),
 			},
 			Width: col.Width,
 			Pin:   col.Pin,
