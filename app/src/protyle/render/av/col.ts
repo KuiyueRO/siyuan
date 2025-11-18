@@ -19,6 +19,7 @@ import {showMessage} from "../../../dialog/message";
 import {escapeAriaLabel, escapeAttr, escapeHtml} from "../../../util/escape";
 import {getFieldsByData} from "./view";
 import {hasClosestByClassName} from "../../util/hasClosest";
+import {getGlobalAttrs, type IGlobalAttrMeta} from "./globalAttr";
 
 export const getColId = (element: Element, viewType: TAVView) => {
     if (viewType === "table" || hasClosestByClassName(element, "custom-attr")) {
@@ -1932,7 +1933,304 @@ export const addCol = (protyle: IProtyle, blockElement: Element, previousID?: st
             blockElement.setAttribute("updated", newUpdated);
         }
     });
+    appendExistingGlobalAttrMenu({
+        menu,
+        protyle,
+        blockElement
+    });
     return menu;
+};
+
+const appendExistingGlobalAttrMenu = (options: {menu: Menu, protyle: IProtyle, blockElement: Element}) => {
+    const label = window.siyuan.languages.addExistingGlobalAttr || window.siyuan.languages.globalAttr || "添加已有全局属性";
+    options.menu.addItem({
+        id: "existing-global-attr",
+        icon: "iconAttr",
+        label,
+        submenu: [{
+            iconHTML: "",
+            type: "empty",
+            label: getExistingGaMenuTemplate(),
+            bind: (element) => {
+                bindExistingGlobalAttrSubmenu({
+                    element,
+                    protyle: options.protyle,
+                    blockElement: options.blockElement
+                });
+            }
+        }]
+    });
+};
+
+const getExistingGaMenuTemplate = () => {
+    const loading = window.siyuan.languages.loading || "Loading...";
+    const cancelLabel = window.siyuan.languages.cancel || "Cancel";
+    const confirmLabel = window.siyuan.languages.confirm || "Confirm";
+    return `<div class="av-ga-menu" style="width: 280px;max-height: 320px;display: flex;flex-direction: column;gap: 6px;">
+    <div class="av-ga-menu__list" style="flex:1;overflow:auto;min-height:160px;margin:0 -4px;padding:0 4px;">
+        <div class="fn__flex fn__flex-center" style="padding: 16px 0;">${escapeHtml(loading)}</div>
+    </div>
+    <div class="fn__hr--small"></div>
+    <div class="av-ga-menu__actions fn__flex" style="gap:8px;">
+        <button class="b3-button b3-button--text" data-type="cancel">${cancelLabel}</button>
+        <span class="fn__flex-1"></span>
+        <button class="b3-button" data-type="apply" disabled>${confirmLabel}</button>
+    </div>
+</div>`;
+};
+
+const bindExistingGlobalAttrSubmenu = (options: {
+    element: HTMLElement,
+    protyle: IProtyle,
+    blockElement: Element
+}) => {
+    const listElement = options.element.querySelector(".av-ga-menu__list") as HTMLElement;
+    const applyButton = options.element.querySelector('[data-type="apply"]') as HTMLButtonElement;
+    const cancelButton = options.element.querySelector('[data-type="cancel"]') as HTMLButtonElement;
+    const usedGaIds = getUsedGlobalAttrIds(options.blockElement);
+    const selectedGaIds = new Set<string>();
+    const attrMap = new Map<string, IGlobalAttrMeta>();
+
+    const setStatusMessage = (message: string, isError = false) => {
+        listElement.innerHTML = `<div class="fn__flex fn__flex-center${isError ? " ft__error" : ""}" style="padding: 12px 0;">${escapeHtml(message)}</div>`;
+    };
+
+    cancelButton?.addEventListener("click", (event) => {
+        event.stopPropagation();
+        window.siyuan.menus.menu.remove();
+    });
+
+    const handleCheckboxChange = (checkbox: HTMLInputElement) => {
+        const gaId = (checkbox.closest(".av-ga-menu__item") as HTMLElement)?.dataset.gaId;
+        if (!gaId) {
+            return;
+        }
+        if (checkbox.checked) {
+            selectedGaIds.add(gaId);
+        } else {
+            selectedGaIds.delete(gaId);
+        }
+        applyButton.disabled = selectedGaIds.size === 0;
+    };
+
+    getGlobalAttrs().then((attrs) => {
+        if (!attrs || attrs.length === 0) {
+            const emptyLabel = window.siyuan.languages.emptyContent || window.siyuan.languages.empty || window.siyuan.languages.noData || "Empty";
+            setStatusMessage(emptyLabel);
+            return;
+        }
+        attrMap.clear();
+        attrs.forEach(attr => attrMap.set(attr.gaId, attr));
+        listElement.innerHTML = attrs.map(attr => renderGlobalAttrOption(attr, usedGaIds)).join("");
+        listElement.querySelectorAll<HTMLInputElement>("input[type=\"checkbox\"]").forEach((checkbox) => {
+            checkbox.addEventListener("change", () => handleCheckboxChange(checkbox));
+        });
+    }).catch((error) => {
+        const msg = typeof error === "string" ? error : (window.siyuan.languages.networkError || "Failed to load global attributes");
+        setStatusMessage(msg, true);
+        showMessage(msg);
+    });
+
+    applyButton?.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (applyButton.disabled || selectedGaIds.size === 0) {
+            return;
+        }
+        const selectedAttrs: IGlobalAttrMeta[] = [];
+        selectedGaIds.forEach((gaId) => {
+            const attr = attrMap.get(gaId);
+            if (attr && !usedGaIds.has(attr.gaId)) {
+                selectedAttrs.push(attr);
+            }
+        });
+        if (selectedAttrs.length === 0) {
+            return;
+        }
+        window.siyuan.menus.menu.remove();
+        appendColumnsFromGlobalAttrs({
+            protyle: options.protyle,
+            blockElement: options.blockElement,
+            attrs: selectedAttrs
+        });
+    });
+};
+
+const renderGlobalAttrOption = (attr: IGlobalAttrMeta, usedGaIds: Set<string>) => {
+    const type = normalizeGlobalAttrType(attr.type);
+    const disabled = usedGaIds.has(attr.gaId);
+    const iconHTML = attr.icon ? unicode2Emoji(attr.icon) : `<svg style="width:14px;height:14px"><use xlink:href="#${getColIconByType(type)}"></use></svg>`;
+    const descHTML = attr.desc ? `<small class="ft__on-surface" style="display:block;margin-top:2px;">${escapeHtml(attr.desc)}</small>` : "";
+    const disabledStyle = disabled ? "opacity:0.5;pointer-events:none;" : "";
+    return `<label class="av-ga-menu__item" data-ga-id="${attr.gaId}" style="display:flex;gap:8px;align-items:flex-start;padding:4px 0;${disabledStyle}">
+    <input type="checkbox" ${disabled ? "disabled" : ""} style="margin-top:4px;">
+    <div class="fn__flex-1">
+        <div class="fn__flex" style="gap:6px;align-items:center;">
+            <span class="b3-menu__avemoji">${iconHTML}</span>
+            <span class="fn__ellipsis">${escapeHtml(attr.name)}</span>
+            <span class="ft__on-surface" style="font-size:12px;">${getColNameByType(type)}</span>
+        </div>
+        ${descHTML}
+    </div>
+</label>`;
+};
+
+const supportedGlobalAttrTypes: TAVCol[] = [
+    "text",
+    "date",
+    "number",
+    "relation",
+    "rollup",
+    "select",
+    "block",
+    "mSelect",
+    "url",
+    "email",
+    "phone",
+    "mAsset",
+    "template",
+    "created",
+    "updated",
+    "checkbox",
+    "lineNumber"
+];
+
+const normalizeGlobalAttrType = (type: string): TAVCol => {
+    if (supportedGlobalAttrTypes.includes(type as TAVCol)) {
+        return type as TAVCol;
+    }
+    return "text";
+};
+
+const getUsedGlobalAttrIds = (blockElement: Element) => {
+    const result = new Set<string>();
+    blockElement.querySelectorAll<HTMLElement>(".av__row--header .av__cell[data-ga-id]").forEach((cell) => {
+        const gaId = cell.getAttribute("data-ga-id");
+        if (gaId) {
+            result.add(gaId);
+        }
+    });
+    return result;
+};
+
+const appendColumnsFromGlobalAttrs = (options: {
+    protyle: IProtyle,
+    blockElement: Element,
+    attrs: IGlobalAttrMeta[]
+}) => {
+    if (!options.attrs || options.attrs.length === 0) {
+        return;
+    }
+    const avID = options.blockElement.getAttribute("data-av-id");
+    const blockId = options.blockElement.getAttribute("data-node-id");
+    if (!avID || !blockId) {
+        return;
+    }
+    const headerCells = options.blockElement.querySelectorAll(".av__row--header .av__cell[data-col-id]");
+    let previousID = headerCells.length > 0 ? headerCells[headerCells.length - 1].getAttribute("data-col-id") : "";
+
+    options.attrs.forEach((attr) => {
+        const type = normalizeGlobalAttrType(attr.type);
+        const columnId = Lute.NewNodeID();
+        const newUpdated = dayjs().format("YYYYMMDDHHmmss");
+        transaction(options.protyle, [{
+            action: "addAttrViewCol",
+            name: attr.name,
+            avID,
+            type,
+            id: columnId,
+            previousID
+        }, {
+            action: "doUpdateUpdated",
+            id: blockId,
+            data: newUpdated,
+        }], [{
+            action: "removeAttrViewCol",
+            id: columnId,
+            avID,
+        }, {
+            action: "doUpdateUpdated",
+            id: blockId,
+            data: options.blockElement.getAttribute("updated")
+        }]);
+        addAttrViewColAnimation({
+            blockElement: options.blockElement,
+            protyle: options.protyle,
+            type,
+            name: attr.name,
+            icon: attr.icon,
+            id: columnId,
+            previousID
+        });
+        options.blockElement.setAttribute("updated", newUpdated);
+        previousID = columnId;
+        scheduleMarkGlobalAttrColumn({
+            blockElement: options.blockElement,
+            colId: columnId,
+            gaId: attr.gaId,
+            isCustomAttr: attr.isCustomAttr
+        });
+    });
+};
+
+const scheduleMarkGlobalAttrColumn = (options: {
+    blockElement: Element,
+    colId: string,
+    gaId: string,
+    isCustomAttr?: boolean
+}) => {
+    const avID = options.blockElement.getAttribute("data-av-id");
+    if (!avID || !options.gaId) {
+        return;
+    }
+    const initialDelay = Math.max((Constants.TIMEOUT_INPUT || 200) * 2, 200);
+    window.setTimeout(() => {
+        markGlobalAttrColumn({
+            avID,
+            blockElement: options.blockElement,
+            colId: options.colId,
+            gaId: options.gaId,
+            isCustomAttr: options.isCustomAttr
+        });
+    }, initialDelay);
+};
+
+const MAX_MARK_RETRY = 3;
+const MARK_RETRY_DELAY = 200;
+
+const markGlobalAttrColumn = (options: {
+    avID: string,
+    blockElement: Element,
+    colId: string,
+    gaId: string,
+    isCustomAttr?: boolean
+}, retry = 0) => {
+    fetchPost("/api/globalattr/markColumn", {
+        avID: options.avID,
+        keyID: options.colId,
+        gaId: options.gaId,
+        isCustomAttr: options.isCustomAttr,
+        createIfAbsent: false,
+        enabled: true
+    }, (response) => {
+        if (!response || response.code !== 0) {
+            if (retry < MAX_MARK_RETRY) {
+                window.setTimeout(() => {
+                    markGlobalAttrColumn(options, retry + 1);
+                }, MARK_RETRY_DELAY * (retry + 1));
+            } else if (response?.msg) {
+                showMessage(response.msg);
+            }
+            return;
+        }
+        const cellElement = options.blockElement.querySelector(`.av__row--header .av__cell[data-col-id="${options.colId}"]`) as HTMLElement;
+        if (cellElement) {
+            cellElement.dataset.gaId = options.gaId;
+            cellElement.setAttribute("data-ga-id", options.gaId);
+            const isCustom = options.isCustomAttr ? "true" : "false";
+            cellElement.dataset.gaCustom = isCustom;
+            cellElement.setAttribute("data-ga-custom", isCustom);
+        }
+    });
 };
 
 const genColDataByType = (type: TAVCol, id: string, name: string) => {
