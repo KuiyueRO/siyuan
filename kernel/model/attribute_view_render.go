@@ -52,6 +52,8 @@ func RenderAttributeView(blockID, avID, viewID, query string, page, pageSize int
 		return
 	}
 
+	hydrateBuiltinGlobalAttrValues(attrView)
+
 	viewable, err = renderAttributeView(attrView, blockID, viewID, query, page, pageSize, groupPaging)
 	return
 }

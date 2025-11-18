@@ -20,6 +20,7 @@ import {getPageSize} from "./groups";
 import {clearSelect} from "../../util/clearSelect";
 import {showMessage} from "../../../dialog/message";
 import {renderKanban} from "./kanban/render";
+import {isBuiltinGlobalAttrId} from "./globalAttr";
 
 interface IIds {
     groupId: string,
@@ -150,9 +151,10 @@ const getTableHTMLs = (data: IAVTable, e: HTMLElement) => {
         if (column.hidden) {
             return;
         }
+        const isBuiltin = isBuiltinGlobalAttrId(column.gaId);
         contentHTML += `<div class="av__cell av__cell--header" data-col-id="${column.id}"  draggable="true" 
     data-icon="${column.icon}" data-dtype="${column.type}" data-wrap="${column.wrap}" data-pin="${column.pin}" 
-    data-ga-id="${escapeAttr(column.gaId || "")}" data-ga-custom="${column.isCustomAttr ? "true" : "false"}" 
+    data-ga-id="${escapeAttr(column.gaId || "")}" data-ga-custom="${column.isCustomAttr ? "true" : "false"}" data-ga-builtin="${isBuiltin ? "true" : "false"}" 
     data-desc="${escapeAttr(column.desc)}" data-position="north" 
 style="width: ${column.width || "200px"};">
     ${column.icon ? unicode2Emoji(column.icon, "av__cellheadericon", true) : `<svg class="av__cellheadericon"><use xlink:href="#${getColIconByType(column.type)}"></use></svg>`}
@@ -194,19 +196,23 @@ style="width: ${column.width || "200px"}">${getCalcValue(column) || `<svg><use x
         }
 
         row.cells.forEach((cell, index) => {
-            if (data.columns[index].hidden) {
+            const columnMeta = data.columns[index];
+            if (columnMeta.hidden) {
                 return;
             }
+            const columnGaId = columnMeta.gaId || "";
+            const isBuiltin = isBuiltinGlobalAttrId(columnGaId);
             // https://github.com/siyuan-note/siyuan/issues/10262
             let checkClass = "";
             if (cell.valueType === "checkbox") {
                 checkClass = cell.value?.checkbox?.checked ? " av__cell-check" : " av__cell-uncheck";
             }
-            contentHTML += `<div class="av__cell${checkClass}" data-id="${cell.id}" data-col-id="${data.columns[index].id}" 
-data-wrap="${data.columns[index].wrap}" 
-data-dtype="${data.columns[index].type}" 
+            contentHTML += `<div class="av__cell${checkClass}" data-id="${cell.id}" data-col-id="${columnMeta.id}" 
+data-wrap="${columnMeta.wrap}" 
+data-dtype="${columnMeta.type}" 
+data-ga-id="${escapeAttr(columnGaId)}" data-ga-custom="${columnMeta.isCustomAttr ? "true" : "false"}" data-ga-builtin="${isBuiltin ? "true" : "false"}" 
 ${cell.value?.isDetached ? ' data-detached="true"' : ""} 
-style="width: ${data.columns[index].width || "200px"};
+style="width: ${columnMeta.width || "200px"};
 ${cell.valueType === "number" ? "text-align: right;" : ""}
 ${cell.bgColor ? `background-color:${cell.bgColor};` : ""}
 ${cell.color ? `color:${cell.color};` : ""}">${renderCell(cell.value, rowIndex, data.showIcon)}</div>`;

@@ -312,39 +312,15 @@ func normalizeKeyType(raw string) (av.KeyType, error) {
 }
 
 func builtinGlobalAttrs() []*GlobalAttr {
-	return []*GlobalAttr{
-		newBuiltinGlobalAttr("id", "ID", av.KeyTypeText, "块 ID"),
-		newBuiltinGlobalAttr("parentId", "Parent ID", av.KeyTypeText, "父块 ID"),
-		newBuiltinGlobalAttr("rootId", "Root ID", av.KeyTypeText, "根块 ID"),
-		newBuiltinGlobalAttr("hash", "Hash", av.KeyTypeText, "内容哈希"),
-		newBuiltinGlobalAttr("box", "Box", av.KeyTypeText, "笔记本盒子"),
-		newBuiltinGlobalAttr("path", "Path", av.KeyTypeText, "文档路径"),
-		newBuiltinGlobalAttr("hPath", "HPath", av.KeyTypeText, "人类可读路径"),
-		newBuiltinGlobalAttr("name", "Name", av.KeyTypeText, "名称"),
-		newBuiltinGlobalAttr("alias", "Alias", av.KeyTypeText, "别名"),
-		newBuiltinGlobalAttr("memo", "Memo", av.KeyTypeText, "备注"),
-		newBuiltinGlobalAttr("tag", "Tag", av.KeyTypeText, "标签"),
-		newBuiltinGlobalAttr("content", "Content", av.KeyTypeText, "原始内容"),
-		newBuiltinGlobalAttr("fcontent", "FContent", av.KeyTypeText, "格式化内容"),
-		newBuiltinGlobalAttr("markdown", "Markdown", av.KeyTypeText, "Markdown 内容"),
-		newBuiltinGlobalAttr("length", "Length", av.KeyTypeNumber, "内容长度"),
-		newBuiltinGlobalAttr("type", "Type", av.KeyTypeText, "块类型"),
-		newBuiltinGlobalAttr("subType", "Subtype", av.KeyTypeText, "子类型"),
-		newBuiltinGlobalAttr("ial", "IAL", av.KeyTypeText, "属性 IAL"),
-		newBuiltinGlobalAttr("sort", "Sort", av.KeyTypeNumber, "排序值"),
-		newBuiltinGlobalAttr("created", "Created", av.KeyTypeText, "创建时间"),
-		newBuiltinGlobalAttr("updated", "Updated", av.KeyTypeText, "更新时间"),
-	}
+	return collectBuiltinGlobalAttrs()
 }
 
 func builtinGlobalAttrByID(id string) *GlobalAttr {
 	if "" == id {
 		return nil
 	}
-	for _, attr := range builtinGlobalAttrs() {
-		if attr.GaID == id {
-			return attr
-		}
+	if spec := builtinAttrSpecMap[id]; spec != nil {
+		return spec.attr
 	}
 	return nil
 }

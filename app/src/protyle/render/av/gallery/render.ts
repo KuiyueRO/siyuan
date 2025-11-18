@@ -13,6 +13,7 @@ import {getColIconByType, getColNameByType} from "../col";
 import {getCompressURL} from "../../../../util/image";
 import {getPageSize} from "../groups";
 import {renderKanban} from "../kanban/render";
+import {isBuiltinGlobalAttrId} from "../globalAttr";
 
 interface IIds {
     groupId: string,
@@ -58,7 +59,8 @@ const getGalleryHTML = (data: IAVGallery) => {
         }
         galleryHTML += '<div class="av__gallery-fields">';
         item.values.forEach((cell, fieldsIndex) => {
-            if (data.fields[fieldsIndex].hidden) {
+            const field = data.fields[fieldsIndex];
+            if (field.hidden) {
                 return;
             }
             let checkClass = "";
@@ -67,36 +69,39 @@ const getGalleryHTML = (data: IAVGallery) => {
             }
             const isEmpty = cellValueIsEmpty(cell.value);
             // NOTE: innerHTML 中不能换行否则 https://github.com/siyuan-note/siyuan/issues/15132
-            let ariaLabel = escapeAttr(data.fields[fieldsIndex].name) || getColNameByType(data.fields[fieldsIndex].type);
-            if (data.fields[fieldsIndex].desc) {
-                ariaLabel += escapeAttr(`<div class="ft__on-surface">${data.fields[fieldsIndex].desc}</div>`);
+            let ariaLabel = escapeAttr(field.name) || getColNameByType(field.type);
+            if (field.desc) {
+                ariaLabel += escapeAttr(`<div class="ft__on-surface">${field.desc}</div>`);
             }
 
             if (cell.valueType === "checkbox" && !data.displayFieldName) {
-                cell.value.checkbox.content = data.fields[fieldsIndex].name || getColNameByType(data.fields[fieldsIndex].type);
+                cell.value.checkbox.content = field.name || getColNameByType(field.type);
             }
+            const fieldGaId = field.gaId || "";
+            const isBuiltin = isBuiltinGlobalAttrId(fieldGaId);
             const cellHTML = `<div class="av__cell${checkClass}${data.displayFieldName ? "" : " ariaLabel"}" 
-data-wrap="${data.fields[fieldsIndex].wrap}" 
+data-wrap="${field.wrap}" 
 aria-label="${ariaLabel}" 
 data-position="5west"
 data-id="${cell.id}" 
-data-field-id="${data.fields[fieldsIndex].id}" 
+data-field-id="${field.id}" 
 data-dtype="${cell.valueType}" 
+data-ga-id="${escapeAttr(fieldGaId)}" data-ga-custom="${field.isCustomAttr ? "true" : "false"}" data-ga-builtin="${isBuiltin ? "true" : "false"}" 
 ${cell.value?.isDetached ? ' data-detached="true"' : ""} 
 style="${cell.bgColor ? `background-color:${cell.bgColor};` : ""}
 ${cell.color ? `color:${cell.color};` : ""}">${renderCell(cell.value, rowIndex, data.showIcon, "gallery")}</div>`;
             if (data.displayFieldName) {
                 galleryHTML += `<div class="av__gallery-field av__gallery-field--name" data-empty="${isEmpty}">
     <div class="av__gallery-name">
-        ${data.fields[fieldsIndex].icon ? unicode2Emoji(data.fields[fieldsIndex].icon, undefined, true) : `<svg><use xlink:href="#${getColIconByType(data.fields[fieldsIndex].type)}"></use></svg>`}${Lute.EscapeHTMLStr(data.fields[fieldsIndex].name)}
-        ${data.fields[fieldsIndex].desc ? `<svg aria-label="${data.fields[fieldsIndex].desc}" data-position="north" class="ariaLabel"><use xlink:href="#iconInfo"></use></svg>` : ""}
+        ${field.icon ? unicode2Emoji(field.icon, undefined, true) : `<svg><use xlink:href="#${getColIconByType(field.type)}"></use></svg>`}${Lute.EscapeHTMLStr(field.name)}
+        ${field.desc ? `<svg aria-label="${field.desc}" data-position="north" class="ariaLabel"><use xlink:href="#iconInfo"></use></svg>` : ""}
     </div>
     ${cellHTML}
 </div>`;
             } else {
                 galleryHTML += `<div class="av__gallery-field" data-empty="${isEmpty}">
     <div class="av__gallery-tip">
-        ${data.fields[fieldsIndex].icon ? unicode2Emoji(data.fields[fieldsIndex].icon, undefined, true) : `<svg><use xlink:href="#${getColIconByType(data.fields[fieldsIndex].type)}"></use></svg>`}${window.siyuan.languages.edit} ${Lute.EscapeHTMLStr(data.fields[fieldsIndex].name)}
+        ${field.icon ? unicode2Emoji(field.icon, undefined, true) : `<svg><use xlink:href="#${getColIconByType(field.type)}"></use></svg>`}${window.siyuan.languages.edit} ${Lute.EscapeHTMLStr(field.name)}
     </div>
     ${cellHTML}
 </div>`;

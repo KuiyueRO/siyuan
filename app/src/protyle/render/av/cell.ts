@@ -19,6 +19,14 @@ import {electronUndo} from "../../undo";
 import {getFieldIdByCellElement} from "./row";
 import {getFieldsByData} from "./view";
 import {getCompressURL, removeCompressURL} from "../../../util/image";
+import {showMessage} from "../../../dialog/message";
+
+const showBuiltinReadonlyMessage = () => {
+    showMessage(window.siyuan.languages.builtinAttrReadonly ||
+        (window.siyuan.languages._kernel ? window.siyuan.languages._kernel[106] : "") ||
+        window.siyuan.languages.lockEdit ||
+        "Built-in global attributes are read-only");
+};
 
 const renderCellURL = (urlContent: string) => {
     let host = urlContent;
@@ -484,6 +492,10 @@ export const popTextCell = (protyle: IProtyle, cellElements: HTMLElement[], type
     if (type === "updated" || type === "created" || document.querySelector(".av__mask")) {
         return;
     }
+    if (cellElements.some(item => item?.dataset.gaBuiltin === "true")) {
+        showBuiltinReadonlyMessage();
+        return;
+    }
     const blockElement = hasClosestBlock(cellElements[0]);
     if (!blockElement) {
         return;
@@ -714,18 +726,32 @@ export const updateCellsValue = async (protyle: IProtyle, nodeElement: HTMLEleme
     const id = nodeElement.dataset.nodeId;
     let text = "";
     const json: IAVCellValue[][] = [];
-    let cellElements: Element[];
+    let cellElements: HTMLElement[];
     if (cElements?.length > 0) {
         cellElements = cElements;
     } else {
-        cellElements = Array.from(nodeElement.querySelectorAll(".av__cell--active, .av__cell--select"));
+        cellElements = Array.from(nodeElement.querySelectorAll(".av__cell--active, .av__cell--select")) as HTMLElement[];
         if (cellElements.length === 0) {
             nodeElement.querySelectorAll(".av__row--select:not(.av__row--header)").forEach(rowElement => {
                 rowElement.querySelectorAll(".av__cell").forEach(cellElement => {
-                    cellElements.push(cellElement);
+                    cellElements.push(cellElement as HTMLElement);
                 });
             });
         }
+    }
+    let hasReadonlyCell = false;
+    cellElements = cellElements.filter(cell => {
+        if (cell.dataset.gaBuiltin === "true") {
+            hasReadonlyCell = true;
+            return false;
+        }
+        return true;
+    });
+    if (cellElements.length === 0) {
+        if (hasReadonlyCell) {
+            showBuiltinReadonlyMessage();
+        }
+        return;
     }
     const isCustomAttr = hasClosestByClassName(cellElements[0], "custom-attr");
     const viewType = nodeElement.getAttribute("data-av-type") as TAVView;

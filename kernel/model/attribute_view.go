@@ -5031,6 +5031,12 @@ func syncGlobalAttrValue(key *av.Key, val *av.Value, blockVal *av.Value) error {
 	if key == nil || key.GaID == "" || val == nil {
 		return nil
 	}
+	if builtinGlobalAttrByID(key.GaID) != nil {
+		if blockVal != nil {
+			val.BlockRefID = getBoundBlockID(blockVal)
+		}
+		return nil
+	}
 
 	attr, err := av.ParseGlobalAttribute(key.GaID)
 	if err != nil {

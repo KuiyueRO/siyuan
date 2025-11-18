@@ -1,5 +1,37 @@
 import {fetchPost} from "../../../util/fetch";
 
+// Keep this list in sync with kernel/model/globalattr_builtin.go
+const builtinGlobalAttrIdSet = new Set([
+    "alias",
+    "box",
+    "content",
+    "created",
+    "fcontent",
+    "hash",
+    "hPath",
+    "ial",
+    "id",
+    "length",
+    "markdown",
+    "memo",
+    "name",
+    "parentId",
+    "path",
+    "rootId",
+    "sort",
+    "subType",
+    "tag",
+    "type",
+    "updated",
+]);
+
+export const isBuiltinGlobalAttrId = (gaId?: string | null) => {
+    if (!gaId) {
+        return false;
+    }
+    return builtinGlobalAttrIdSet.has(gaId);
+};
+
 export interface IGlobalAttrMeta {
     gaId: string;
     name: string;
