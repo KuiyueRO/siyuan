@@ -56,6 +56,90 @@ import {
     goGroupsSort,
     setGroupMethod
 } from "./groups";
+import {BUILTIN_ATTR_VIEW_ID} from "./globalAttr";
+
+const getBuiltinAttrPanelLabel = () => {
+    const languages = window.siyuan.languages;
+    return languages.blockAttrBuiltin || languages.globalAttr || languages.builtinAttrReadonly || languages.database || "Built-in attributes";
+};
+
+const shouldRenderBuiltinSelectLocally = (type: string, cellElements?: HTMLElement[]) => {
+    if (type !== "select" || !cellElements || !cellElements.length) {
+        return false;
+    }
+    return cellElements[0].dataset.avId === BUILTIN_ATTR_VIEW_ID;
+};
+
+const buildBuiltinSelectData = (cellElements?: HTMLElement[]): IAV | null => {
+    if (!cellElements || !cellElements.length) {
+        return null;
+    }
+    const cellElement = cellElements[0];
+    const columnType = cellElement.dataset.type as TAVCol;
+    if (!columnType || (columnType !== "select" && columnType !== "mSelect")) {
+        return null;
+    }
+    let options: IAVColumn["options"] = [];
+    const optionsAttr = cellElement.getAttribute("data-options");
+    if (optionsAttr) {
+        try {
+            options = JSON.parse(optionsAttr);
+        } catch (error) {
+            console.warn("Failed to parse builtin select options", error);
+        }
+    }
+    const columnWidth = cellElement.getBoundingClientRect().width;
+    const column: IAVColumn = {
+        width: columnWidth ? `${Math.round(columnWidth)}px` : "200px",
+        icon: cellElement.getAttribute("data-col-icon") || "",
+        id: cellElement.dataset.colId || "",
+        name: cellElement.getAttribute("data-col-name") || "",
+        desc: cellElement.getAttribute("data-col-desc") || "",
+        gaId: cellElement.dataset.gaId || "",
+        isCustomAttr: cellElement.dataset.gaCustom === "true",
+        gaValues: [],
+        wrap: false,
+        pin: false,
+        hidden: false,
+        type: columnType,
+        numberFormat: cellElement.getAttribute("data-number-format") || "",
+        template: cellElement.getAttribute("data-template") || "",
+        calc: {},
+        options,
+    };
+    const viewName = getBuiltinAttrPanelLabel();
+    const stubView: IAVTable = {
+        name: viewName,
+        desc: "",
+        id: BUILTIN_ATTR_VIEW_ID,
+        type: "table",
+        icon: "",
+        hideAttrViewName: true,
+        pageSize: 0,
+        showIcon: false,
+        wrapField: false,
+        filters: [],
+        sorts: [],
+        groups: [],
+        group: {field: ""},
+        groupKey: column,
+        groupValue: {
+            type: "text",
+            text: {content: ""}
+        },
+        columns: [column],
+        rows: [],
+        rowCount: 0,
+    };
+    return {
+        id: BUILTIN_ATTR_VIEW_ID,
+        name: viewName,
+        view: stubView,
+        viewID: BUILTIN_ATTR_VIEW_ID,
+        viewType: "table",
+        views: [stubView],
+    };
+};
 
 export const openMenuPanel = (options: {
     protyle: IProtyle,
@@ -75,15 +159,10 @@ export const openMenuPanel = (options: {
         avPanelElement.remove();
         return;
     }
-    const avID = options.blockElement.getAttribute("data-av-id");
+    const primaryCell = options.cellElements?.[0];
+    const avID = options.blockElement.getAttribute("data-av-id") || primaryCell?.dataset.avId || "";
     const avPageSize = getPageSize(options.blockElement);
-    fetchPost("/api/av/renderAttributeView", {
-        id: avID,
-        query: (options.blockElement.querySelector('[data-type="av-search"]') as HTMLInputElement)?.value.trim() || "",
-        pageSize: avPageSize.unGroupPageSize,
-        groupPaging: avPageSize.groupPageSize,
-        viewID: options.blockElement.getAttribute(Constants.CUSTOM_SY_AV_VIEW)
-    }, (response) => {
+    const renderPanel = (renderData: IAV) => {
         avPanelElement = document.querySelector(".av__panel");
         if (avPanelElement) {
             avPanelElement.remove();
@@ -93,7 +172,7 @@ export const openMenuPanel = (options: {
         const blockID = options.blockElement.getAttribute("data-node-id");
 
         const isCustomAttr = !options.blockElement.classList.contains("av");
-        let data = response.data as IAV;
+        let data = renderData;
         let html;
         let fields = getFieldsByData(data);
         if (options.type === "config") {
@@ -1674,6 +1753,24 @@ export const openMenuPanel = (options: {
                 target = target.parentElement;
             }
         });
+    };
+
+    if (shouldRenderBuiltinSelectLocally(options.type, options.cellElements)) {
+        const builtinData = buildBuiltinSelectData(options.cellElements);
+        if (builtinData) {
+            renderPanel(builtinData);
+            return;
+        }
+    }
+
+    fetchPost("/api/av/renderAttributeView", {
+        id: avID,
+        query: (options.blockElement.querySelector('[data-type="av-search"]') as HTMLInputElement)?.value.trim() || "",
+        pageSize: avPageSize.unGroupPageSize,
+        groupPaging: avPageSize.groupPageSize,
+        viewID: options.blockElement.getAttribute(Constants.CUSTOM_SY_AV_VIEW)
+    }, (response) => {
+        renderPanel(response.data as IAV);
     });
 };
 

@@ -223,6 +223,8 @@ export const renderAVAttribute = (element: HTMLElement, id: string, protyle: IPr
     </div>
     <div data-av-id="${table.avID}" data-col-id="${item.values[0].keyID}" data-row-id="${item.values[0].blockID}" data-id="${item.values[0].id}" data-type="${item.values[0].type}" 
 data-options="${item.key?.options ? escapeAttr(JSON.stringify(item.key.options)) : "[]"}" 
+data-col-name="${escapeAttr(item.key.name || "")}" data-col-desc="${escapeAttr(item.key.desc || "")}" data-col-icon="${escapeAttr(item.key.icon || "")}" 
+data-number-format="${escapeAttr(item.key.numberFormat || "")}" data-template="${escapeAttr(item.key.template || "")}" 
 ${["text", "number", "date", "url", "phone", "template", "email"].includes(item.values[0].type) ? "" : `placeholder="${window.siyuan.languages.empty}"`}  
 data-ga-id="${escapeAttr(gaId)}" data-ga-custom="${item.key.isCustomAttr ? "true" : "false"}" data-ga-builtin="${isBuiltin ? "true" : "false"}" data-ga-writable="${isBuiltinWritable ? "true" : "false"}"
 class="fn__flex-1 fn__flex${["url", "text", "number", "email", "phone", "block"].includes(item.values[0].type) ? "" : " custom-attr__avvalue"}${["created", "updated"].includes(item.values[0].type) ? " custom-attr__avvalue--readonly" : ""}">${genAVValueHTML(item.values[0])}</div>
