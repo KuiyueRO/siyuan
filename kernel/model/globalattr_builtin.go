@@ -12,12 +12,14 @@ import (
 
 type builtinAttrHydrator func(val *av.Value, block *sql.Block, attrs map[string]string)
 type builtinAttrWriter func(tx *Transaction, blockID string, val *av.Value) error
+type builtinAttrOptionsProvider func() []*av.SelectOption
 
 type builtinAttrSpec struct {
-	attr    *GlobalAttr
-	icon    string
-	hydrate builtinAttrHydrator
-	write   builtinAttrWriter
+	attr            *GlobalAttr
+	icon            string
+	hydrate         builtinAttrHydrator
+	write           builtinAttrWriter
+	optionsProvider builtinAttrOptionsProvider
 }
 
 var (
@@ -57,9 +59,9 @@ func init() {
 		newBuiltinAttrSpec("memo", "Memo", "iconM", av.KeyTypeText, "备注", func(val *av.Value, block *sql.Block, attrs map[string]string) {
 			fillTextValue(val, attrOrDefault(attrs, "memo", block.Memo))
 		}, builtinTextAttrWriter("memo")),
-		newBuiltinAttrSpec("bookmark", "Bookmark", "iconBookmark", av.KeyTypeSelect, "书签", func(val *av.Value, _ *sql.Block, attrs map[string]string) {
+		withBuiltinOptions(newBuiltinAttrSpec("bookmark", "Bookmark", "iconBookmark", av.KeyTypeSelect, "书签", func(val *av.Value, _ *sql.Block, attrs map[string]string) {
 			fillSelectValue(val, attrs["bookmark"])
-		}, builtinSelectAttrWriter("bookmark")),
+		}, builtinSelectAttrWriter("bookmark")), bookmarkSelectOptions),
 		newBuiltinAttrSpec("tag", "Tag", "iconTags", av.KeyTypeMSelect, "标签", func(val *av.Value, _ *sql.Block, attrs map[string]string) {
 			fillMSelectValue(val, splitCSV(attrs["tags"]))
 		}, builtinMultiSelectAttrWriter("tags", true)),
@@ -109,6 +111,25 @@ func newBuiltinAttrSpec(id, name, icon string, keyType av.KeyType, desc string, 
 		spec.write = writer[0]
 	}
 	return spec
+}
+
+func withBuiltinOptions(spec *builtinAttrSpec, provider builtinAttrOptionsProvider) *builtinAttrSpec {
+	if spec != nil {
+		spec.optionsProvider = provider
+	}
+	return spec
+}
+
+func bookmarkSelectOptions() []*av.SelectOption {
+	labels := BookmarkLabels()
+	if len(labels) == 0 {
+		return nil
+	}
+	options := make([]*av.SelectOption, 0, len(labels))
+	for idx, label := range labels {
+		options = append(options, &av.SelectOption{Name: label, Color: nextAutoColor(idx)})
+	}
+	return options
 }
 
 func collectBuiltinGlobalAttrs() []*GlobalAttr {
@@ -187,7 +208,7 @@ func hydrateBuiltinGlobalAttrValues(attrView *av.AttributeView) {
 		if spec == nil {
 			continue
 		}
-		ensureBuiltinKeyMetadata(keyValues.Key, spec.attr)
+		ensureBuiltinKeyMetadata(keyValues.Key, spec)
 		for _, binding := range bindings {
 			block := blockMap[binding.blockID]
 			if block == nil {
@@ -216,16 +237,22 @@ func hydrateBuiltinGlobalAttrValues(attrView *av.AttributeView) {
 	}
 }
 
-func ensureBuiltinKeyMetadata(key *av.Key, spec *GlobalAttr) {
-	if key == nil || spec == nil {
+func ensureBuiltinKeyMetadata(key *av.Key, spec *builtinAttrSpec) {
+	if key == nil || spec == nil || spec.attr == nil {
 		return
 	}
-	key.Type = spec.Type
-	if spec.Icon != "" {
-		key.Icon = spec.Icon
+	attr := spec.attr
+	key.Type = attr.Type
+	if attr.Icon != "" {
+		key.Icon = attr.Icon
 	}
-	key.Desc = spec.Desc
-	key.Name = spec.Name
+	key.Desc = attr.Desc
+	key.Name = attr.Name
+	if spec.optionsProvider != nil && (key.Type == av.KeyTypeSelect || key.Type == av.KeyTypeMSelect) {
+		if options := spec.optionsProvider(); len(options) > 0 {
+			key.Options = options
+		}
+	}
 }
 
 func fillTextValue(val *av.Value, content string) {
