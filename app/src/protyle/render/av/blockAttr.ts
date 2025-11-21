@@ -17,6 +17,7 @@ import {webUtils} from "electron";
 import {isBrowser} from "../../../util/functions";
 import {Constants} from "../../../constants";
 import {getCompressURL} from "../../../util/image";
+import {isBuiltinGlobalAttrId, isWritableBuiltinGlobalAttrId} from "./globalAttr";
 
 const genAVRollupHTML = (value: IAVCellValue) => {
     let html = "";
@@ -200,6 +201,9 @@ export const renderAVAttribute = (element: HTMLElement, id: string, protyle: IPr
     <span data-type="remove" data-row-id="${table.keyValues && table.keyValues[0].values[0].blockID}" class="block__icon block__icon--warning block__icon--show b3-tooltips__w b3-tooltips" aria-label="${window.siyuan.languages.removeAV}"><svg><use xlink:href="#iconTrashcan"></use></svg></span>
 </div>`;
             table.keyValues?.forEach(item => {
+                const gaId = item.key.gaId || "";
+                const isBuiltin = isBuiltinGlobalAttrId(gaId);
+                const isBuiltinWritable = isBuiltin && isWritableBuiltinGlobalAttrId(gaId);
                 innerHTML += `<div class="block__icons av__row" data-id="${id}" data-col-id="${item.key.id}">
     <div class="block__icon" draggable="true"><svg><use xlink:href="#iconDrag"></use></svg></div>
     <div class="block__logo ariaLabel fn__pointer" data-type="editCol" data-position="parentW" aria-label="${escapeAriaLabel(item.key.name)}<div class='ft__on-surface'>${escapeAriaLabel(item.key.desc)}</div>">
@@ -209,6 +213,7 @@ export const renderAVAttribute = (element: HTMLElement, id: string, protyle: IPr
     <div data-av-id="${table.avID}" data-col-id="${item.values[0].keyID}" data-row-id="${item.values[0].blockID}" data-id="${item.values[0].id}" data-type="${item.values[0].type}" 
 data-options="${item.key?.options ? escapeAttr(JSON.stringify(item.key.options)) : "[]"}" 
 ${["text", "number", "date", "url", "phone", "template", "email"].includes(item.values[0].type) ? "" : `placeholder="${window.siyuan.languages.empty}"`}  
+data-ga-id="${escapeAttr(gaId)}" data-ga-custom="${item.key.isCustomAttr ? "true" : "false"}" data-ga-builtin="${isBuiltin ? "true" : "false"}" data-ga-writable="${isBuiltinWritable ? "true" : "false"}"
 class="fn__flex-1 fn__flex${["url", "text", "number", "email", "phone", "block"].includes(item.values[0].type) ? "" : " custom-attr__avvalue"}${["created", "updated"].includes(item.values[0].type) ? " custom-attr__avvalue--readonly" : ""}">${genAVValueHTML(item.values[0])}</div>
 </div>`;
             });

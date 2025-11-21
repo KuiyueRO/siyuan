@@ -492,7 +492,7 @@ export const popTextCell = (protyle: IProtyle, cellElements: HTMLElement[], type
     if (type === "updated" || type === "created" || document.querySelector(".av__mask")) {
         return;
     }
-    if (cellElements.some(item => item?.dataset.gaBuiltin === "true")) {
+    if (cellElements.some(item => item?.dataset.gaBuiltin === "true" && item.dataset.gaWritable !== "true")) {
         showBuiltinReadonlyMessage();
         return;
     }
@@ -741,7 +741,7 @@ export const updateCellsValue = async (protyle: IProtyle, nodeElement: HTMLEleme
     }
     let hasReadonlyCell = false;
     cellElements = cellElements.filter(cell => {
-        if (cell.dataset.gaBuiltin === "true") {
+        if (cell.dataset.gaBuiltin === "true" && cell.dataset.gaWritable !== "true") {
             hasReadonlyCell = true;
             return false;
         }

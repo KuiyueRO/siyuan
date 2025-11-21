@@ -13,7 +13,7 @@ import {getColIconByType, getColNameByType} from "../col";
 import {getCompressURL} from "../../../../util/image";
 import {getPageSize} from "../groups";
 import {renderKanban} from "../kanban/render";
-import {isBuiltinGlobalAttrId} from "../globalAttr";
+import {isBuiltinGlobalAttrId, isWritableBuiltinGlobalAttrId} from "../globalAttr";
 
 interface IIds {
     groupId: string,
@@ -79,6 +79,7 @@ const getGalleryHTML = (data: IAVGallery) => {
             }
             const fieldGaId = field.gaId || "";
             const isBuiltin = isBuiltinGlobalAttrId(fieldGaId);
+            const isBuiltinWritable = isBuiltin && isWritableBuiltinGlobalAttrId(fieldGaId);
             const cellHTML = `<div class="av__cell${checkClass}${data.displayFieldName ? "" : " ariaLabel"}" 
 data-wrap="${field.wrap}" 
 aria-label="${ariaLabel}" 
@@ -86,7 +87,7 @@ data-position="5west"
 data-id="${cell.id}" 
 data-field-id="${field.id}" 
 data-dtype="${cell.valueType}" 
-data-ga-id="${escapeAttr(fieldGaId)}" data-ga-custom="${field.isCustomAttr ? "true" : "false"}" data-ga-builtin="${isBuiltin ? "true" : "false"}" 
+data-ga-id="${escapeAttr(fieldGaId)}" data-ga-custom="${field.isCustomAttr ? "true" : "false"}" data-ga-builtin="${isBuiltin ? "true" : "false"}" data-ga-writable="${isBuiltinWritable ? "true" : "false"}" 
 ${cell.value?.isDetached ? ' data-detached="true"' : ""} 
 style="${cell.bgColor ? `background-color:${cell.bgColor};` : ""}
 ${cell.color ? `color:${cell.color};` : ""}">${renderCell(cell.value, rowIndex, data.showIcon, "gallery")}</div>`;

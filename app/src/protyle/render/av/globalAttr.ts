@@ -4,6 +4,7 @@ import {fetchPost} from "../../../util/fetch";
 const builtinGlobalAttrIdSet = new Set([
     "alias",
     "box",
+    "bookmark",
     "content",
     "created",
     "fcontent",
@@ -25,11 +26,27 @@ const builtinGlobalAttrIdSet = new Set([
     "updated",
 ]);
 
+// Keep this list in sync with kernel/model/globalattr_builtin.go writable specs
+const writableBuiltinGlobalAttrIdSet = new Set([
+    "alias",
+    "bookmark",
+    "memo",
+    "name",
+    "tag",
+]);
+
 export const isBuiltinGlobalAttrId = (gaId?: string | null) => {
     if (!gaId) {
         return false;
     }
     return builtinGlobalAttrIdSet.has(gaId);
+};
+
+export const isWritableBuiltinGlobalAttrId = (gaId?: string | null) => {
+    if (!gaId) {
+        return false;
+    }
+    return writableBuiltinGlobalAttrIdSet.has(gaId);
 };
 
 export interface IGlobalAttrMeta {

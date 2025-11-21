@@ -4767,10 +4767,12 @@ func updateAttributeViewValue(tx *Transaction, attrView *av.AttributeView, keyID
 		oldIsDetached = blockVal.IsDetached
 		oldBoundBlockID = blockVal.Block.ID
 	}
+	var key *av.Key
 	for _, keyValues := range attrView.KeyValues {
 		if keyID != keyValues.Key.ID {
 			continue
 		}
+		key = keyValues.Key
 
 		for _, value := range keyValues.Values {
 			if itemID == value.BlockID {
@@ -4785,6 +4787,10 @@ func updateAttributeViewValue(tx *Transaction, attrView *av.AttributeView, keyID
 			keyValues.Values = append(keyValues.Values, val)
 		}
 		break
+	}
+
+	if key == nil {
+		key, _ = attrView.GetKey(keyID)
 	}
 
 	isUpdatingBlockKey := av.KeyTypeBlock == val.Type
@@ -4805,8 +4811,6 @@ func updateAttributeViewValue(tx *Transaction, attrView *av.AttributeView, keyID
 		logging.LogErrorf("unmarshal data [%s] failed: %s", data, err)
 		return
 	}
-
-	key, _ := attrView.GetKey(keyID)
 
 	if av.KeyTypeNumber == val.Type {
 		if nil != val.Number {
@@ -4931,8 +4935,9 @@ func updateAttributeViewValue(tx *Transaction, attrView *av.AttributeView, keyID
 		updateTwoWayRelationDestAttrView(attrView, key, val, relationChangeMode, oldRelationBlockIDs)
 	}
 
-	if syncErr := syncGlobalAttrValue(key, val, blockVal); nil != syncErr {
+	if syncErr := syncGlobalAttrValue(tx, key, val, blockVal); nil != syncErr {
 		logging.LogWarnf("sync global attr value failed: %s", syncErr)
+		return nil, syncErr
 	}
 
 	regenAttrViewGroups(attrView)
@@ -5027,13 +5032,22 @@ func updateTwoWayRelationDestAttrView(attrView *av.AttributeView, relKey *av.Key
 	}
 }
 
-func syncGlobalAttrValue(key *av.Key, val *av.Value, blockVal *av.Value) error {
+func syncGlobalAttrValue(tx *Transaction, key *av.Key, val *av.Value, blockVal *av.Value) error {
 	if key == nil || key.GaID == "" || val == nil {
 		return nil
 	}
-	if builtinGlobalAttrByID(key.GaID) != nil {
-		if blockVal != nil {
-			val.BlockRefID = getBoundBlockID(blockVal)
+	if spec := builtinAttrSpecMap[key.GaID]; spec != nil {
+		boundBlockID := getBoundBlockID(blockVal)
+		if boundBlockID == "" {
+			boundBlockID = val.BlockRefID
+		}
+		if boundBlockID != "" {
+			val.BlockRefID = boundBlockID
+		} else {
+			return fmt.Errorf("global attribute %s requires a bound block", key.GaID)
+		}
+		if spec.write != nil {
+			return spec.write(tx, boundBlockID, val)
 		}
 		return nil
 	}
@@ -5203,9 +5217,7 @@ func unbindBlockAv(tx *Transaction, avID, nodeID string) {
 	}
 	if err != nil {
 		logging.LogWarnf("set node [%s] attrs failed: %s", nodeID, err)
-		return
 	}
-	return
 }
 
 func bindBlockAv(tx *Transaction, avID, blockID string) {
@@ -5215,7 +5227,6 @@ func bindBlockAv(tx *Transaction, avID, blockID string) {
 	}
 
 	bindBlockAv0(tx, avID, node, tree)
-	return
 }
 
 func bindBlockAv0(tx *Transaction, avID string, node *ast.Node, tree *parse.Tree) {
@@ -5242,9 +5253,7 @@ func bindBlockAv0(tx *Transaction, avID string, node *ast.Node, tree *parse.Tree
 	}
 	if err != nil {
 		logging.LogWarnf("set node [%s] attrs failed: %s", node.ID, err)
-		return
 	}
-	return
 }
 
 func updateBlockValueStaticText(tx *Transaction, node *ast.Node, tree *parse.Tree, avID, text string) {

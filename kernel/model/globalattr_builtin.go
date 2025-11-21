@@ -11,11 +11,13 @@ import (
 )
 
 type builtinAttrHydrator func(val *av.Value, block *sql.Block, attrs map[string]string)
+type builtinAttrWriter func(tx *Transaction, blockID string, val *av.Value) error
 
 type builtinAttrSpec struct {
 	attr    *GlobalAttr
 	icon    string
 	hydrate builtinAttrHydrator
+	write   builtinAttrWriter
 }
 
 var (
@@ -46,18 +48,21 @@ func init() {
 		newBuiltinAttrSpec("hPath", "HPath", "", av.KeyTypeText, "人类可读路径", func(val *av.Value, block *sql.Block, _ map[string]string) {
 			fillTextValue(val, block.HPath)
 		}),
-		newBuiltinAttrSpec("name", "Name", "iconN", av.KeyTypeText, "名称", func(val *av.Value, block *sql.Block, attrs map[string]string) {
-			fillTextValue(val, attrOrDefault(attrs, "name", block.Name))
-		}),
+		newBuiltinAttrSpec("name", "Name", "iconN", av.KeyTypeSelect, "名称", func(val *av.Value, block *sql.Block, attrs map[string]string) {
+			fillSelectValue(val, attrOrDefault(attrs, "name", block.Name))
+		}, builtinSelectAttrWriter("name")),
 		newBuiltinAttrSpec("alias", "Alias", "iconA", av.KeyTypeMSelect, "别名", func(val *av.Value, block *sql.Block, attrs map[string]string) {
 			fillMSelectValue(val, splitCSV(attrOrDefault(attrs, "alias", block.Alias)))
-		}),
+		}, builtinMultiSelectAttrWriter("alias", false)),
 		newBuiltinAttrSpec("memo", "Memo", "iconM", av.KeyTypeText, "备注", func(val *av.Value, block *sql.Block, attrs map[string]string) {
 			fillTextValue(val, attrOrDefault(attrs, "memo", block.Memo))
-		}),
-		newBuiltinAttrSpec("tag", "Tag", "iconTags", av.KeyTypeMSelect, "标签", func(val *av.Value, block *sql.Block, attrs map[string]string) {
+		}, builtinTextAttrWriter("memo")),
+		newBuiltinAttrSpec("bookmark", "Bookmark", "iconBookmark", av.KeyTypeSelect, "书签", func(val *av.Value, _ *sql.Block, attrs map[string]string) {
+			fillSelectValue(val, attrs["bookmark"])
+		}, builtinSelectAttrWriter("bookmark")),
+		newBuiltinAttrSpec("tag", "Tag", "iconTags", av.KeyTypeMSelect, "标签", func(val *av.Value, _ *sql.Block, attrs map[string]string) {
 			fillMSelectValue(val, splitCSV(attrs["tags"]))
-		}),
+		}, builtinMultiSelectAttrWriter("tags", true)),
 		newBuiltinAttrSpec("content", "Content", "", av.KeyTypeText, "原始内容", func(val *av.Value, block *sql.Block, _ map[string]string) {
 			fillTextValue(val, block.Content)
 		}),
@@ -96,10 +101,14 @@ func init() {
 	}
 }
 
-func newBuiltinAttrSpec(id, name, icon string, keyType av.KeyType, desc string, hydrator builtinAttrHydrator) *builtinAttrSpec {
+func newBuiltinAttrSpec(id, name, icon string, keyType av.KeyType, desc string, hydrator builtinAttrHydrator, writer ...builtinAttrWriter) *builtinAttrSpec {
 	attr := newBuiltinGlobalAttr(id, name, keyType, desc)
 	attr.Icon = icon
-	return &builtinAttrSpec{attr: attr, icon: icon, hydrate: hydrator}
+	spec := &builtinAttrSpec{attr: attr, icon: icon, hydrate: hydrator}
+	if len(writer) > 0 {
+		spec.write = writer[0]
+	}
+	return spec
 }
 
 func collectBuiltinGlobalAttrs() []*GlobalAttr {
@@ -261,6 +270,7 @@ func fillMSelectValue(val *av.Value, values []string) {
 	}
 	var selects []*av.ValueSelect
 	seen := map[string]struct{}{}
+	colorIndex := 0
 	for _, v := range values {
 		v = strings.TrimSpace(v)
 		if v == "" {
@@ -270,10 +280,25 @@ func fillMSelectValue(val *av.Value, values []string) {
 			continue
 		}
 		seen[v] = struct{}{}
-		selects = append(selects, &av.ValueSelect{Content: v})
+		selects = append(selects, &av.ValueSelect{Content: v, Color: nextAutoColor(colorIndex)})
+		colorIndex++
 	}
 	val.Type = av.KeyTypeMSelect
 	val.MSelect = selects
+}
+
+func fillSelectValue(val *av.Value, value string) {
+	if val == nil {
+		return
+	}
+	resetValueSlots(val)
+	val.Type = av.KeyTypeSelect
+	value = strings.TrimSpace(value)
+	if value == "" {
+		val.MSelect = nil
+		return
+	}
+	val.MSelect = []*av.ValueSelect{{Content: value, Color: nextAutoColor(0)}}
 }
 
 func resetValueSlots(val *av.Value) {
@@ -317,4 +342,80 @@ func attrOrDefault(attrs map[string]string, key, fallback string) string {
 		}
 	}
 	return fallback
+}
+
+func builtinTextAttrWriter(attrName string) builtinAttrWriter {
+	return func(tx *Transaction, blockID string, val *av.Value) error {
+		var content string
+		if val != nil && val.Text != nil {
+			content = strings.TrimSpace(val.Text.Content)
+		}
+		return writeBlockAttrs(tx, blockID, map[string]string{attrName: content})
+	}
+}
+
+func builtinSelectAttrWriter(attrName string) builtinAttrWriter {
+	return func(tx *Transaction, blockID string, val *av.Value) error {
+		var content string
+		if val != nil && len(val.MSelect) > 0 && val.MSelect[0] != nil {
+			content = strings.TrimSpace(val.MSelect[0].Content)
+		}
+		return writeBlockAttrs(tx, blockID, map[string]string{attrName: content})
+	}
+}
+
+func builtinMultiSelectAttrWriter(attrName string, docOnly bool) builtinAttrWriter {
+	return func(tx *Transaction, blockID string, val *av.Value) error {
+		if docOnly {
+			block := sql.GetBlock(blockID)
+			if block == nil || block.Type != "d" {
+				return fmt.Errorf("global attribute %s is only writable for document blocks", attrName)
+			}
+		}
+		seen := map[string]struct{}{}
+		var parts []string
+		if val != nil {
+			for _, opt := range val.MSelect {
+				if opt == nil {
+					continue
+				}
+				text := strings.TrimSpace(opt.Content)
+				if text == "" {
+					continue
+				}
+				if _, ok := seen[text]; ok {
+					continue
+				}
+				seen[text] = struct{}{}
+				parts = append(parts, text)
+			}
+		}
+		var content string
+		if len(parts) > 0 {
+			content = strings.Join(parts, ", ")
+		}
+		return writeBlockAttrs(tx, blockID, map[string]string{attrName: content})
+	}
+}
+
+func writeBlockAttrs(tx *Transaction, blockID string, attrs map[string]string) error {
+	if blockID == "" {
+		return fmt.Errorf("block id is empty")
+	}
+	if tx != nil {
+		node, tree, err := getNodeByBlockID(tx, blockID)
+		if err != nil {
+			return err
+		}
+		if node == nil || tree == nil {
+			return fmt.Errorf("block %s not found", blockID)
+		}
+		return setNodeAttrsWithTx(tx, node, tree, attrs)
+	}
+	return SetBlockAttrs(blockID, attrs)
+}
+
+func nextAutoColor(index int) string {
+	const paletteSize = 14
+	return fmt.Sprintf("%d", (index%paletteSize)+1)
 }

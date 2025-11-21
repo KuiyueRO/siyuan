@@ -20,7 +20,7 @@ import {getPageSize} from "./groups";
 import {clearSelect} from "../../util/clearSelect";
 import {showMessage} from "../../../dialog/message";
 import {renderKanban} from "./kanban/render";
-import {isBuiltinGlobalAttrId} from "./globalAttr";
+import {isBuiltinGlobalAttrId, isWritableBuiltinGlobalAttrId} from "./globalAttr";
 
 interface IIds {
     groupId: string,
@@ -152,9 +152,10 @@ const getTableHTMLs = (data: IAVTable, e: HTMLElement) => {
             return;
         }
         const isBuiltin = isBuiltinGlobalAttrId(column.gaId);
+        const isBuiltinWritable = isBuiltin && isWritableBuiltinGlobalAttrId(column.gaId);
         contentHTML += `<div class="av__cell av__cell--header" data-col-id="${column.id}"  draggable="true" 
     data-icon="${column.icon}" data-dtype="${column.type}" data-wrap="${column.wrap}" data-pin="${column.pin}" 
-    data-ga-id="${escapeAttr(column.gaId || "")}" data-ga-custom="${column.isCustomAttr ? "true" : "false"}" data-ga-builtin="${isBuiltin ? "true" : "false"}" 
+    data-ga-id="${escapeAttr(column.gaId || "")}" data-ga-custom="${column.isCustomAttr ? "true" : "false"}" data-ga-builtin="${isBuiltin ? "true" : "false"}" data-ga-writable="${isBuiltinWritable ? "true" : "false"}" 
     data-desc="${escapeAttr(column.desc)}" data-position="north" 
 style="width: ${column.width || "200px"};">
     ${column.icon ? unicode2Emoji(column.icon, "av__cellheadericon", true) : `<svg class="av__cellheadericon"><use xlink:href="#${getColIconByType(column.type)}"></use></svg>`}
@@ -202,6 +203,7 @@ style="width: ${column.width || "200px"}">${getCalcValue(column) || `<svg><use x
             }
             const columnGaId = columnMeta.gaId || "";
             const isBuiltin = isBuiltinGlobalAttrId(columnGaId);
+            const isBuiltinWritable = isBuiltin && isWritableBuiltinGlobalAttrId(columnGaId);
             // https://github.com/siyuan-note/siyuan/issues/10262
             let checkClass = "";
             if (cell.valueType === "checkbox") {
@@ -210,7 +212,7 @@ style="width: ${column.width || "200px"}">${getCalcValue(column) || `<svg><use x
             contentHTML += `<div class="av__cell${checkClass}" data-id="${cell.id}" data-col-id="${columnMeta.id}" 
 data-wrap="${columnMeta.wrap}" 
 data-dtype="${columnMeta.type}" 
-data-ga-id="${escapeAttr(columnGaId)}" data-ga-custom="${columnMeta.isCustomAttr ? "true" : "false"}" data-ga-builtin="${isBuiltin ? "true" : "false"}" 
+data-ga-id="${escapeAttr(columnGaId)}" data-ga-custom="${columnMeta.isCustomAttr ? "true" : "false"}" data-ga-builtin="${isBuiltin ? "true" : "false"}" data-ga-writable="${isBuiltinWritable ? "true" : "false"}" 
 ${cell.value?.isDetached ? ' data-detached="true"' : ""} 
 style="width: ${columnMeta.width || "200px"};
 ${cell.valueType === "number" ? "text-align: right;" : ""}
