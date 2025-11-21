@@ -936,7 +936,11 @@ func setAttributeViewBlockAttr(c *gin.Context) {
 		"value": updatedVal,
 	}
 
-	model.ReloadAttrView(avID)
+	if avID == model.BuiltinAttrViewID {
+		model.ReloadAttrViewsByBlock(itemID)
+	} else {
+		model.ReloadAttrView(avID)
+	}
 }
 
 func batchSetAttributeViewBlockAttrs(c *gin.Context) {

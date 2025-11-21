@@ -1601,10 +1601,15 @@ type BlockAttributeViewKeys struct {
 	KeyValues []*av.KeyValues `json:"keyValues"`
 }
 
+const BuiltinAttrViewID = "__builtin_global_attrs__"
+
 func GetBlockAttributeViewKeys(nodeID string) (ret []*BlockAttributeViewKeys) {
 	waitForSyncingStorages()
 
 	ret = []*BlockAttributeViewKeys{}
+	if builtin := collectBuiltinBlockAttributeViewKeys(nodeID); builtin != nil {
+		ret = append(ret, builtin)
+	}
 	attrs := sql.GetBlockAttrs(nodeID)
 	avs := attrs[av.NodeAttrNameAvs]
 	if "" == avs {
@@ -1622,6 +1627,7 @@ func GetBlockAttributeViewKeys(nodeID string) (ret []*BlockAttributeViewKeys) {
 				logging.LogErrorf("parse attribute view [%s] failed: %s", avID, err)
 				continue
 			}
+			hydrateBuiltinGlobalAttrValues(attrView)
 			cachedAttrViews[avID] = attrView
 		}
 
@@ -1720,6 +1726,130 @@ func GetBlockAttributeViewKeys(nodeID string) (ret []*BlockAttributeViewKeys) {
 		})
 	}
 	return
+}
+
+func collectBuiltinBlockAttributeViewKeys(nodeID string) *BlockAttributeViewKeys {
+	block := sql.GetBlock(nodeID)
+	if block == nil {
+		return nil
+	}
+	attrs := sql.GetBlockAttrs(nodeID)
+	keyValues := make([]*av.KeyValues, 0, len(builtinAttrSpecs))
+	for _, spec := range builtinAttrSpecs {
+		if spec == nil || spec.attr == nil {
+			continue
+		}
+		key := &av.Key{ID: spec.attr.GaID, GaID: spec.attr.GaID}
+		ensureBuiltinKeyMetadata(key, spec)
+		val := &av.Value{
+			ID:               ast.NewNodeID(),
+			KeyID:            key.ID,
+			BlockID:          nodeID,
+			BlockRefID:       nodeID,
+			Type:             key.Type,
+			IsRenderAutoFill: true,
+		}
+		spec.hydrate(val, block, attrs)
+		keyValues = append(keyValues, &av.KeyValues{Key: key, Values: []*av.Value{val}})
+	}
+	return &BlockAttributeViewKeys{
+		AvID:      BuiltinAttrViewID,
+		AvName:    "",
+		BlockIDs:  []string{nodeID},
+		KeyValues: keyValues,
+	}
+}
+
+func GetBuiltinAttributeViewKeys(nodeID string) *BlockAttributeViewKeys {
+	return collectBuiltinBlockAttributeViewKeys(nodeID)
+}
+
+func updateBuiltinAttributeViewValue(tx *Transaction, keyID, blockID string, valueData interface{}) (*av.Value, error) {
+	if blockID == "" {
+		return nil, fmt.Errorf("block id is empty")
+	}
+	spec := builtinAttrSpecMap[keyID]
+	if spec == nil || spec.attr == nil {
+		return nil, fmt.Errorf("unknown builtin global attribute %s", keyID)
+	}
+	key := &av.Key{ID: spec.attr.GaID, GaID: spec.attr.GaID}
+	ensureBuiltinKeyMetadata(key, spec)
+	var incoming av.Value
+	data, err := gulu.JSON.MarshalJSON(valueData)
+	if err != nil {
+		logging.LogErrorf("marshal value [%+v] failed: %s", valueData, err)
+		return nil, err
+	}
+	if err := gulu.JSON.UnmarshalJSON(data, &incoming); err != nil {
+		logging.LogErrorf("unmarshal data [%s] failed: %s", data, err)
+		return nil, err
+	}
+	incoming.Type = key.Type
+	normalizeBuiltinAttrValue(key, &incoming)
+	return setBuiltinAttrValue(tx, blockID, key, &incoming)
+}
+
+func normalizeBuiltinAttrValue(key *av.Key, val *av.Value) {
+	if key == nil || val == nil {
+		return
+	}
+	switch key.Type {
+	case av.KeyTypeNumber:
+		if val.Number == nil {
+			val.Number = &av.ValueNumber{}
+		}
+		if !val.Number.IsNotEmpty {
+			val.Number.Content = 0
+			val.Number.FormattedContent = ""
+		} else {
+			val.Number.FormatNumber()
+		}
+	case av.KeyTypeDate:
+		if val.Date == nil {
+			val.Date = &av.ValueDate{}
+		}
+		if !val.Date.IsNotEmpty {
+			val.Date.Content = 0
+			val.Date.FormattedContent = ""
+		}
+	case av.KeyTypeSelect:
+		if len(val.MSelect) == 0 || val.MSelect[0] == nil {
+			val.MSelect = nil
+			return
+		}
+		content := strings.TrimSpace(val.MSelect[0].Content)
+		if content == "" {
+			val.MSelect = nil
+			return
+		}
+		val.MSelect = []*av.ValueSelect{{Content: content, Color: val.MSelect[0].Color}}
+	case av.KeyTypeMSelect:
+		if len(val.MSelect) == 0 {
+			val.MSelect = nil
+			return
+		}
+		seen := map[string]struct{}{}
+		var selects []*av.ValueSelect
+		for _, opt := range val.MSelect {
+			if opt == nil {
+				continue
+			}
+			content := strings.TrimSpace(opt.Content)
+			if content == "" {
+				continue
+			}
+			if _, ok := seen[content]; ok {
+				continue
+			}
+			seen[content] = struct{}{}
+			selects = append(selects, &av.ValueSelect{Content: content, Color: opt.Color})
+		}
+		if len(selects) == 0 {
+			val.MSelect = nil
+			return
+		}
+		val.MSelect = selects
+	}
 }
 
 func genAttrViewGroups(view *av.View, attrView *av.AttributeView) {
@@ -4737,6 +4867,10 @@ func BatchUpdateAttributeViewCells(tx *Transaction, avID string, values []interf
 }
 
 func UpdateAttributeViewCell(tx *Transaction, avID, keyID, itemID string, valueData interface{}) (val *av.Value, err error) {
+	if avID == BuiltinAttrViewID {
+		return updateBuiltinAttributeViewValue(tx, keyID, itemID, valueData)
+	}
+
 	attrView, err := av.ParseAttributeView(avID)
 	if err != nil {
 		return
@@ -5216,6 +5350,21 @@ func clearGlobalAttrBindings(attrView *av.AttributeView, blockID string) {
 		if attr.RemoveValue(blockID) {
 			if err = av.SaveGlobalAttribute(attr); err != nil {
 				logging.LogWarnf("remove global attr value failed: %s", err)
+			}
+		}
+	}
+}
+
+func ReloadAttrViewsByBlock(blockID string) {
+	if blockID == "" {
+		return
+	}
+	rels := av.GetBlockRels()
+	for avID, blockIDs := range rels {
+		for _, id := range blockIDs {
+			if id == blockID {
+				ReloadAttrView(avID)
+				break
 			}
 		}
 	}

@@ -1,5 +1,7 @@
 import {fetchPost} from "../../../util/fetch";
 
+export const BUILTIN_ATTR_VIEW_ID = "__builtin_global_attrs__";
+
 // Keep this list in sync with kernel/model/globalattr_builtin.go
 const builtinGlobalAttrIdSet = new Set([
     "alias",

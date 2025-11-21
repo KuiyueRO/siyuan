@@ -17,7 +17,7 @@ import {webUtils} from "electron";
 import {isBrowser} from "../../../util/functions";
 import {Constants} from "../../../constants";
 import {getCompressURL} from "../../../util/image";
-import {isBuiltinGlobalAttrId, isWritableBuiltinGlobalAttrId} from "./globalAttr";
+import {BUILTIN_ATTR_VIEW_ID, isBuiltinGlobalAttrId, isWritableBuiltinGlobalAttrId} from "./globalAttr";
 
 const genAVRollupHTML = (value: IAVCellValue) => {
     let html = "";
@@ -165,6 +165,11 @@ export const genAVValueHTML = (value: IAVCellValue) => {
     return html;
 };
 
+const getBuiltinAttrPanelLabel = () => {
+    const languages = window.siyuan.languages;
+    return languages.blockAttrBuiltin || languages.globalAttr || languages.builtinAttrReadonly || languages.database || "Built-in attributes";
+};
+
 export const renderAVAttribute = (element: HTMLElement, id: string, protyle: IProtyle, cb?: (element: HTMLElement) => void) => {
     fetchPost("/api/av/getAttributeViewKeys", {id}, (response) => {
         let html = "";
@@ -192,21 +197,27 @@ export const renderAVAttribute = (element: HTMLElement, id: string, protyle: IPr
             avID: string
             avName: string
         }) => {
+            const isBuiltinView = table.avID === BUILTIN_ATTR_VIEW_ID;
+            const avLabel = table.avName || (isBuiltinView ? getBuiltinAttrPanelLabel() : window.siyuan.languages.database);
+            const removeAction = isBuiltinView ? "" : `<span data-type="remove" data-row-id="${table.keyValues && table.keyValues[0].values[0].blockID}" class="block__icon block__icon--warning block__icon--show b3-tooltips__w b3-tooltips" aria-label="${window.siyuan.languages.removeAV}"><svg><use xlink:href="#iconTrashcan"></use></svg></span>`;
             let innerHTML = `<div class="custom-attr__avheader">
     <div class="block__logo popover__block" style="max-width:calc(100% - 40px)" data-id='${JSON.stringify(table.blockIDs)}'>
         <svg class="block__logoicon"><use xlink:href="#iconDatabase"></use></svg>
-        <span class="fn__ellipsis">${table.avName || window.siyuan.languages.database}</span>
+        <span class="fn__ellipsis">${avLabel}</span>
     </div>
     <div class="fn__flex-1"></div>
-    <span data-type="remove" data-row-id="${table.keyValues && table.keyValues[0].values[0].blockID}" class="block__icon block__icon--warning block__icon--show b3-tooltips__w b3-tooltips" aria-label="${window.siyuan.languages.removeAV}"><svg><use xlink:href="#iconTrashcan"></use></svg></span>
+    ${removeAction}
 </div>`;
             table.keyValues?.forEach(item => {
                 const gaId = item.key.gaId || "";
                 const isBuiltin = isBuiltinGlobalAttrId(gaId);
                 const isBuiltinWritable = isBuiltin && isWritableBuiltinGlobalAttrId(gaId);
+                const dragHandle = isBuiltinView ? "<div class=\"block__icon\"></div>" : "<div class=\"block__icon\" draggable=\"true\"><svg><use xlink:href=\"#iconDrag\"></use></svg></div>";
+                const logoClasses = `block__logo ariaLabel${isBuiltinView ? "" : " fn__pointer"}`;
+                const logoAttrs = `${isBuiltinView ? "" : "data-type=\"editCol\""} data-position="parentW" aria-label="${escapeAriaLabel(item.key.name)}<div class='ft__on-surface'>${escapeAriaLabel(item.key.desc)}</div>"`;
                 innerHTML += `<div class="block__icons av__row" data-id="${id}" data-col-id="${item.key.id}">
-    <div class="block__icon" draggable="true"><svg><use xlink:href="#iconDrag"></use></svg></div>
-    <div class="block__logo ariaLabel fn__pointer" data-type="editCol" data-position="parentW" aria-label="${escapeAriaLabel(item.key.name)}<div class='ft__on-surface'>${escapeAriaLabel(item.key.desc)}</div>">
+    ${dragHandle}
+    <div class="${logoClasses}" ${logoAttrs}>
         ${item.key.icon ? unicode2Emoji(item.key.icon, "block__logoicon", true) : `<svg class="block__logoicon"><use xlink:href="#${getColIconByType(item.key.type)}"></use></svg>`}
         <span>${escapeHtml(item.key.name)}</span>
     </div>
@@ -217,14 +228,21 @@ data-ga-id="${escapeAttr(gaId)}" data-ga-custom="${item.key.isCustomAttr ? "true
 class="fn__flex-1 fn__flex${["url", "text", "number", "email", "phone", "block"].includes(item.values[0].type) ? "" : " custom-attr__avvalue"}${["created", "updated"].includes(item.values[0].type) ? " custom-attr__avvalue--readonly" : ""}">${genAVValueHTML(item.values[0])}</div>
 </div>`;
             });
-            innerHTML += `<div class="fn__hr"></div>
+            if (!isBuiltinView) {
+                innerHTML += `<div class="fn__hr"></div>
 <button data-type="addColumn" class="b3-button b3-button--cancel"><svg><use xlink:href="#iconAdd"></use></svg>${window.siyuan.languages.newCol}</button>
 <div class="fn__hr--b"></div><div class="fn__hr--b"></div>`;
-            html += `<div data-av-id="${table.avID}" data-av-type="table" data-node-id="${id}" data-type="NodeAttributeView">${innerHTML}</div>`;
+            }
+            html += `<div data-av-id="${table.avID}" data-av-type="table" data-node-id="${id}" data-type="NodeAttributeView" data-av-builtin="${isBuiltinView ? "true" : "false"}">${innerHTML}</div>`;
 
             if (element.innerHTML) {
                 // 防止 blockElement 找不到
-                element.querySelector(`[data-node-id="${id}"][data-av-id="${table.avID}"]`).innerHTML = innerHTML;
+                const avElement = element.querySelector(`[data-node-id="${id}"][data-av-id="${table.avID}"]`) as HTMLElement;
+                if (avElement) {
+                    avElement.innerHTML = innerHTML;
+                    avElement.setAttribute("data-av-builtin", isBuiltinView ? "true" : "false");
+                    applyBuiltinReadonlyState(avElement);
+                }
             }
         });
         if (element.innerHTML === "") {
@@ -399,6 +417,7 @@ class="fn__flex-1 fn__flex${["url", "text", "number", "email", "phone", "block"]
             });
             element.innerHTML = html;
         }
+        applyBuiltinReadonlyState(element);
         element.querySelectorAll(".b3-text-field--text").forEach((item: HTMLInputElement) => {
             item.addEventListener("change", () => {
                 let value;
@@ -581,4 +600,33 @@ const openEdit = (protyle: IProtyle, element: HTMLElement, event: MouseEvent) =>
 
 export const isCustomAttr = (cellElement: Element) => {
     return !!cellElement.getAttribute("data-av-id");
+};
+
+const applyBuiltinReadonlyState = (scope: HTMLElement | null) => {
+    if (!scope) {
+        return;
+    }
+    const roots: HTMLElement[] = [];
+    if (scope.matches("[data-av-builtin=\"true\"]")) {
+        roots.push(scope);
+    }
+    scope.querySelectorAll<HTMLElement>("[data-av-builtin=\"true\"]").forEach(item => {
+        roots.push(item);
+    });
+    if (!roots.length) {
+        return;
+    }
+    roots.forEach(root => {
+        root.querySelectorAll<HTMLElement>("[data-ga-builtin=\"true\"]").forEach(cell => {
+            if (cell.dataset.gaWritable === "true") {
+                return;
+            }
+            cell.classList.add("custom-attr__avvalue--readonly");
+            cell.setAttribute("aria-disabled", "true");
+            cell.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input, textarea").forEach(control => {
+                control.setAttribute("readonly", "true");
+                control.classList.add("b3-text-field--readonly");
+            });
+        });
+    });
 };

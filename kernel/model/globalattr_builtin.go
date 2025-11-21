@@ -1,6 +1,7 @@
 package model
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -387,6 +388,42 @@ func attrOrDefault(attrs map[string]string, key, fallback string) string {
 		}
 	}
 	return fallback
+}
+
+func setBuiltinAttrValue(tx *Transaction, blockID string, key *av.Key, val *av.Value) (*av.Value, error) {
+	if blockID == "" {
+		return nil, fmt.Errorf("block id is empty")
+	}
+	if key == nil || key.GaID == "" {
+		return nil, fmt.Errorf("global attribute key is invalid")
+	}
+	spec := builtinAttrSpecMap[key.GaID]
+	if spec == nil || spec.write == nil {
+		return nil, fmt.Errorf("global attribute %s is read-only", key.GaID)
+	}
+	if val == nil {
+		val = &av.Value{}
+	}
+	if err := spec.write(tx, blockID, val); err != nil {
+		return nil, err
+	}
+	var cloned av.Value
+	data, err := json.Marshal(val)
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(data, &cloned); err != nil {
+		return nil, err
+	}
+	if cloned.ID == "" {
+		cloned.ID = ast.NewNodeID()
+	}
+	cloned.KeyID = key.ID
+	cloned.BlockID = blockID
+	cloned.BlockRefID = blockID
+	cloned.Type = key.Type
+	cloned.IsRenderAutoFill = true
+	return &cloned, nil
 }
 
 func builtinTextAttrWriter(attrName string) builtinAttrWriter {
