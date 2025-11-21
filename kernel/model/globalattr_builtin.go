@@ -149,6 +149,7 @@ func hydrateBuiltinGlobalAttrValues(attrView *av.AttributeView) {
 	}
 	blockKeyValues := attrView.GetBlockKeyValues()
 	if blockKeyValues == nil {
+		ensureAttrViewBuiltinMetadata(attrView)
 		return
 	}
 
@@ -187,6 +188,7 @@ func hydrateBuiltinGlobalAttrValues(attrView *av.AttributeView) {
 		}
 	}
 	if len(bindings) == 0 {
+		ensureAttrViewBuiltinMetadata(attrView)
 		return
 	}
 
@@ -234,6 +236,22 @@ func hydrateBuiltinGlobalAttrValues(attrView *av.AttributeView) {
 			}
 			spec.hydrate(val, block, attrs)
 		}
+	}
+}
+
+func ensureAttrViewBuiltinMetadata(attrView *av.AttributeView) {
+	if attrView == nil {
+		return
+	}
+	for _, keyValues := range attrView.KeyValues {
+		if keyValues == nil || keyValues.Key == nil {
+			continue
+		}
+		spec := builtinAttrSpecMap[keyValues.Key.GaID]
+		if spec == nil {
+			continue
+		}
+		ensureBuiltinKeyMetadata(keyValues.Key, spec)
 	}
 }
 

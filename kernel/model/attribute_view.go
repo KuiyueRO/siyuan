@@ -4668,6 +4668,10 @@ func replaceAttributeViewBlock0(attrView *av.AttributeView, oldBlockID, newNodeI
 				content = util.UnescapeHTML(content)
 				blockVal.Block.Icon, blockVal.Block.Content = icon, content
 
+				if err = mergePendingBuiltinAttrValues(tx, attrView, blockVal.BlockID, newNodeID); err != nil {
+					return
+				}
+
 				refreshRelatedSrcAvs(avID)
 			} else {
 				blockVal.Block.ID = ""
@@ -4794,6 +4798,8 @@ func updateAttributeViewValue(tx *Transaction, attrView *av.AttributeView, keyID
 	}
 
 	isUpdatingBlockKey := av.KeyTypeBlock == val.Type
+	newlyBoundRowID := ""
+	newlyBoundBlockID := ""
 	var oldRelationBlockIDs []string
 	if av.KeyTypeRelation == val.Type {
 		if nil != val.Relation {
@@ -4887,6 +4893,8 @@ func updateAttributeViewValue(tx *Transaction, attrView *av.AttributeView, keyID
 
 			if !val.IsDetached { // 现在绑定了块
 				bindBlockAv(tx, avID, val.Block.ID)
+				newlyBoundRowID = val.BlockID
+				newlyBoundBlockID = val.Block.ID
 			}
 		} else {
 			// 之前绑定了块
@@ -4904,6 +4912,8 @@ func updateAttributeViewValue(tx *Transaction, attrView *av.AttributeView, keyID
 					bindBlockAv(tx, avID, val.Block.ID)
 					val.Block.Content = util.UnescapeHTML(val.Block.Content)
 					clearGlobalAttrBindings(attrView, oldBoundBlockID)
+					newlyBoundRowID = val.BlockID
+					newlyBoundBlockID = val.Block.ID
 				} else { // 之前绑定的块和现在绑定的块一样
 					content := strings.TrimSpace(val.Block.Content)
 					node, tree, _ := getNodeByBlockID(tx, val.Block.ID)
@@ -4918,6 +4928,12 @@ func updateAttributeViewValue(tx *Transaction, attrView *av.AttributeView, keyID
 					}
 				}
 			}
+		}
+	}
+
+	if newlyBoundBlockID != "" && newlyBoundRowID != "" {
+		if err := mergePendingBuiltinAttrValues(tx, attrView, newlyBoundRowID, newlyBoundBlockID); err != nil {
+			return nil, err
 		}
 	}
 
@@ -5041,11 +5057,11 @@ func syncGlobalAttrValue(tx *Transaction, key *av.Key, val *av.Value, blockVal *
 		if boundBlockID == "" {
 			boundBlockID = val.BlockRefID
 		}
-		if boundBlockID != "" {
-			val.BlockRefID = boundBlockID
-		} else {
-			return fmt.Errorf("global attribute %s requires a bound block", key.GaID)
+		if boundBlockID == "" {
+			val.BlockRefID = ""
+			return nil
 		}
+		val.BlockRefID = boundBlockID
 		if spec.write != nil {
 			return spec.write(tx, boundBlockID, val)
 		}
@@ -5080,6 +5096,37 @@ func syncGlobalAttrValue(tx *Transaction, key *av.Key, val *av.Value, blockVal *
 	}
 	attr.UpsertValue(blockID, val)
 	return av.SaveGlobalAttribute(attr)
+}
+
+func mergePendingBuiltinAttrValues(tx *Transaction, attrView *av.AttributeView, rowID, blockID string) error {
+	if attrView == nil || rowID == "" || blockID == "" {
+		return nil
+	}
+	for _, keyValues := range attrView.KeyValues {
+		if keyValues == nil || keyValues.Key == nil || keyValues.Key.GaID == "" {
+			continue
+		}
+		spec := builtinAttrSpecMap[keyValues.Key.GaID]
+		if spec == nil || spec.write == nil {
+			continue
+		}
+		val := keyValues.GetValue(rowID)
+		if val == nil {
+			continue
+		}
+		if val.BlockRefID != "" && val.BlockRefID != blockID {
+			continue
+		}
+		if val.IsRenderAutoFill {
+			continue
+		}
+		if err := spec.write(tx, blockID, val); err != nil {
+			return err
+		}
+		val.BlockRefID = blockID
+		val.IsRenderAutoFill = true
+	}
+	return nil
 }
 
 func syncGlobalAttrKey(key *av.Key) error {
