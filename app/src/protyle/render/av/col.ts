@@ -19,7 +19,7 @@ import {showMessage} from "../../../dialog/message";
 import {escapeAriaLabel, escapeAttr, escapeHtml} from "../../../util/escape";
 import {getFieldsByData} from "./view";
 import {hasClosestByClassName} from "../../util/hasClosest";
-import {getGlobalAttrs, type IGlobalAttrMeta} from "./globalAttr";
+import {getGlobalAttrs, type IGlobalAttrMeta, isValidCustomAttrName, checkCustomAttrNameConflict, invalidateGlobalAttrCache} from "./globalAttr";
 
 export const getColId = (element: Element, viewType: TAVView) => {
     if (viewType === "table" || hasClosestByClassName(element, "custom-attr")) {
@@ -1020,13 +1020,84 @@ export const showColMenu = (protyle: IProtyle, blockElement: Element, cellElemen
                         cellElement.dataset.gaCustom = attr?.isCustomAttr ? "true" : "false";
                         cellElement.setAttribute("data-ga-id", currentGaId);
                         cellElement.setAttribute("data-ga-custom", attr?.isCustomAttr ? "true" : "false");
+                        // Update the custom attr switch state
+                        const customAttrSwitch = menu.element.querySelector('[data-id="customAttrSwitch"] .b3-switch') as HTMLInputElement;
+                        if (customAttrSwitch) {
+                            customAttrSwitch.checked = attr?.isCustomAttr || false;
+                            customAttrSwitch.disabled = false;
+                        }
                     } else {
                         currentGaId = "";
                         cellElement.dataset.gaId = "";
                         cellElement.dataset.gaCustom = "false";
                         cellElement.setAttribute("data-ga-id", "");
                         cellElement.setAttribute("data-ga-custom", "false");
+                        // Disable and uncheck the custom attr switch
+                        const customAttrSwitch = menu.element.querySelector('[data-id="customAttrSwitch"] .b3-switch') as HTMLInputElement;
+                        if (customAttrSwitch) {
+                            customAttrSwitch.checked = false;
+                            customAttrSwitch.disabled = true;
+                        }
                     }
+                    invalidateGlobalAttrCache();
+                });
+            });
+        }
+    });
+    // Custom attribute switch - only available when global attr is enabled
+    const customAttrLabel = window.siyuan.languages.customAttr || "Custom attribute";
+    const customAttrDesc = window.siyuan.languages.customAttrDesc || "Sync this field's value to block's custom-* attribute";
+    const isCurrentCustomAttr = cellElement.dataset.gaCustom === "true";
+    menu.addItem({
+        id: "customAttrSwitch",
+        icon: "iconCode",
+        label: `<div class="fn__flex-column fn__flex-1"><label class="fn__flex fn__pointer"><span>${customAttrLabel}</span><span class="fn__space fn__flex-1"></span>
+<input type="checkbox" class="b3-switch b3-switch--menu"${isCurrentCustomAttr ? " checked" : ""}${!currentGaId ? " disabled" : ""}></label>
+<small class="ft__on-surface">${escapeHtml(customAttrDesc)}</small></div>`,
+        bind(element) {
+            const switchElement = element.querySelector(".b3-switch") as HTMLInputElement;
+            switchElement.addEventListener("change", async () => {
+                const enabled = switchElement.checked;
+                if (!currentGaId) {
+                    switchElement.checked = false;
+                    showMessage("Please enable global attribute first");
+                    return;
+                }
+                // Validate name when enabling
+                if (enabled) {
+                    const colName = oldValue;
+                    if (!isValidCustomAttrName(colName)) {
+                        switchElement.checked = false;
+                        showMessage(`Invalid custom attribute name: "${colName}". Name must start with a letter and contain only letters, numbers, and hyphens.`);
+                        return;
+                    }
+                    const conflict = await checkCustomAttrNameConflict(colName, currentGaId);
+                    if (conflict) {
+                        switchElement.checked = false;
+                        showMessage(`Another global attribute "${conflict.name}" (${conflict.gaId}) already has custom attribute enabled`);
+                        return;
+                    }
+                }
+                const payload = {
+                    avID,
+                    keyID: colId,
+                    gaId: currentGaId,
+                    isCustomAttr: enabled,
+                    createIfAbsent: false,
+                    enabled: true
+                };
+                fetchPost("/api/globalattr/markColumn", payload, (response: IWebSocketData) => {
+                    if (!response || response.code !== 0) {
+                        switchElement.checked = !enabled;
+                        if (response?.msg) {
+                            showMessage(response.msg);
+                        }
+                        return;
+                    }
+                    const attr = response.data as {gaId?: string, isCustomAttr?: boolean};
+                    cellElement.dataset.gaCustom = attr?.isCustomAttr ? "true" : "false";
+                    cellElement.setAttribute("data-ga-custom", attr?.isCustomAttr ? "true" : "false");
+                    invalidateGlobalAttrCache();
                 });
             });
         }

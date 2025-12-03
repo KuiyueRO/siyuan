@@ -5219,7 +5219,13 @@ func syncGlobalAttrValue(tx *Transaction, key *av.Key, val *av.Value, blockVal *
 			return nil
 		}
 		if attr.RemoveValue(prev) {
-			return av.SaveGlobalAttribute(attr)
+			if saveErr := av.SaveGlobalAttribute(attr); saveErr != nil {
+				return saveErr
+			}
+			// Clear custom attribute when unbinding
+			if attr.Key != nil && attr.Key.IsCustomAttr && IsValidCustomAttrName(attr.Key.Name) {
+				clearCustomAttrValue(tx, prev, attr.Key.Name)
+			}
 		}
 		return nil
 	}
@@ -5229,7 +5235,185 @@ func syncGlobalAttrValue(tx *Transaction, key *av.Key, val *av.Value, blockVal *
 		attr = &av.GlobalAttribute{Key: key.Clone()}
 	}
 	attr.UpsertValue(blockID, val)
-	return av.SaveGlobalAttribute(attr)
+	if saveErr := av.SaveGlobalAttribute(attr); saveErr != nil {
+		return saveErr
+	}
+
+	// Sync to custom attribute if enabled
+	if attr.Key != nil && attr.Key.IsCustomAttr && IsValidCustomAttrName(attr.Key.Name) {
+		syncCustomAttrFromGAValue(tx, blockID, attr.Key, val)
+		updateBlockCustomGas(tx, blockID, attr.ID(), true)
+	}
+	return nil
+}
+
+// syncCustomAttrFromGAValue writes the GA value to the block's custom-{name} attribute.
+func syncCustomAttrFromGAValue(tx *Transaction, blockID string, key *av.Key, val *av.Value) {
+	if blockID == "" || key == nil || !key.IsCustomAttr || !IsValidCustomAttrName(key.Name) {
+		return
+	}
+
+	// Skip template and rollup types - they are read-only for custom attrs
+	if key.Type == av.KeyTypeTemplate || key.Type == av.KeyTypeRollup {
+		return
+	}
+
+	serialized := serializeGAValueForCustomAttr(key, val)
+	attrName := "custom-" + key.Name
+
+	if serialized == "" {
+		// Don't write empty values
+		return
+	}
+
+	if err := writeBlockAttrs(tx, blockID, map[string]string{attrName: serialized}); err != nil {
+		logging.LogWarnf("sync custom attr [%s] to block [%s] failed: %s", attrName, blockID, err)
+	}
+}
+
+// clearCustomAttrValue removes the custom-{name} attribute from a block.
+func clearCustomAttrValue(tx *Transaction, blockID string, name string) {
+	if blockID == "" || name == "" || !IsValidCustomAttrName(name) {
+		return
+	}
+	attrName := "custom-" + name
+	if err := writeBlockAttrs(tx, blockID, map[string]string{attrName: ""}); err != nil {
+		logging.LogWarnf("clear custom attr [%s] from block [%s] failed: %s", attrName, blockID, err)
+	}
+}
+
+// updateBlockCustomGas updates the custom-gas attribute of a block.
+func updateBlockCustomGas(tx *Transaction, blockID string, gaID string, add bool) {
+	if blockID == "" || gaID == "" {
+		return
+	}
+
+	var attrs map[string]string
+	if tx != nil {
+		node, _, err := getNodeByBlockID(tx, blockID)
+		if err != nil || node == nil {
+			return
+		}
+		attrs = parse.IAL2Map(node.KramdownIAL)
+	} else {
+		attrs = sql.GetBlockAttrs(blockID)
+	}
+
+	currentGas := attrs["custom-gas"]
+	var gasList []string
+	if currentGas != "" {
+		gasList = strings.Split(currentGas, ",")
+	}
+
+	if add {
+		// Add gaID if not present
+		found := false
+		for _, id := range gasList {
+			if id == gaID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			gasList = append(gasList, gaID)
+		}
+	} else {
+		// Remove gaID if present
+		var newList []string
+		for _, id := range gasList {
+			if id != gaID {
+				newList = append(newList, id)
+			}
+		}
+		gasList = newList
+	}
+
+	newGas := strings.Join(gasList, ",")
+	if newGas != currentGas {
+		if err := writeBlockAttrs(tx, blockID, map[string]string{"custom-gas": newGas}); err != nil {
+			logging.LogWarnf("update custom-gas for block [%s] failed: %s", blockID, err)
+		}
+	}
+}
+
+// serializeGAValueForCustomAttr converts a GA value to a string for custom attribute storage.
+func serializeGAValueForCustomAttr(key *av.Key, val *av.Value) string {
+	if val == nil {
+		return ""
+	}
+
+	switch key.Type {
+	case av.KeyTypeText:
+		if val.Text != nil {
+			return strings.TrimSpace(val.Text.Content)
+		}
+	case av.KeyTypeNumber:
+		if val.Number != nil && val.Number.IsNotEmpty {
+			return strings.TrimSuffix(strings.TrimSuffix(fmt.Sprintf("%f", val.Number.Content), "0"), ".")
+		}
+	case av.KeyTypeDate:
+		if val.Date != nil && val.Date.Content > 0 {
+			t := time.UnixMilli(val.Date.Content)
+			if val.Date.IsNotTime {
+				return t.Format("20060102")
+			}
+			return t.Format("20060102150405")
+		}
+	case av.KeyTypeSelect:
+		if len(val.MSelect) > 0 && val.MSelect[0] != nil {
+			return strings.TrimSpace(val.MSelect[0].Content)
+		}
+	case av.KeyTypeMSelect:
+		if len(val.MSelect) > 0 {
+			var parts []string
+			for _, opt := range val.MSelect {
+				if opt != nil && opt.Content != "" {
+					parts = append(parts, strings.TrimSpace(opt.Content))
+				}
+			}
+			return strings.Join(parts, ", ")
+		}
+	case av.KeyTypeURL:
+		if val.URL != nil {
+			return strings.TrimSpace(val.URL.Content)
+		}
+	case av.KeyTypeEmail:
+		if val.Email != nil {
+			return strings.TrimSpace(val.Email.Content)
+		}
+	case av.KeyTypePhone:
+		if val.Phone != nil {
+			return strings.TrimSpace(val.Phone.Content)
+		}
+	case av.KeyTypeCheckbox:
+		if val.Checkbox != nil {
+			if val.Checkbox.Checked {
+				return "true"
+			}
+			return "false"
+		}
+	case av.KeyTypeRelation:
+		if val.Relation != nil && len(val.Relation.BlockIDs) > 0 {
+			return strings.Join(val.Relation.BlockIDs, ", ")
+		}
+	case av.KeyTypeTemplate:
+		// Template results are written but not synced back
+		if val.Template != nil {
+			return strings.TrimSpace(val.Template.Content)
+		}
+	case av.KeyTypeRollup:
+		// Rollup results are written but not synced back
+		if val.Rollup != nil && len(val.Rollup.Contents) > 0 {
+			var parts []string
+			for _, content := range val.Rollup.Contents {
+				if content != nil {
+					parts = append(parts, content.String(true))
+				}
+			}
+			return strings.Join(parts, ", ")
+		}
+	}
+	return ""
 }
 
 func mergePendingBuiltinAttrValues(tx *Transaction, attrView *av.AttributeView, rowID, blockID string) error {

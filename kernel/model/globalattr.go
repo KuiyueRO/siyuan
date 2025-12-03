@@ -160,6 +160,33 @@ func MarkAttrViewColumnAsGlobal(req *MarkGlobalAttrReq) (*GlobalAttr, error) {
 		return builtin, nil
 	}
 
+	// Validate isCustomAttr constraints
+	if req.IsCustomAttr {
+		attrName := keyValues.Key.Name
+		if "" != req.GaID {
+			// If binding to existing GA, get its name
+			existingAttr, _ := av.ParseGlobalAttribute(req.GaID)
+			if existingAttr != nil && existingAttr.Key != nil {
+				attrName = existingAttr.Key.Name
+			}
+		}
+		// Check name validity
+		if !IsValidCustomAttrName(attrName) {
+			return nil, fmt.Errorf("invalid custom attribute name: %s (must start with a letter and contain only letters, numbers, and hyphens)", attrName)
+		}
+		// Check for name conflict
+		excludeID := req.GaID
+		if excludeID == "" {
+			excludeID = keyValues.Key.GaID
+		}
+		conflictID, checkErr := CheckCustomAttrNameConflict(attrName, excludeID)
+		if checkErr != nil {
+			logging.LogWarnf("check custom attr name conflict failed: %s", checkErr)
+		} else if conflictID != "" {
+			return nil, fmt.Errorf("another global attribute with name '%s' already has isCustomAttr enabled (gaId: %s)", attrName, conflictID)
+		}
+	}
+
 	var attr *av.GlobalAttribute
 	if "" != req.GaID {
 		attr, err = av.ParseGlobalAttribute(req.GaID)
@@ -333,4 +360,60 @@ func newBuiltinGlobalAttr(id, name string, keyType av.KeyType, desc string) *Glo
 		Type:         keyType,
 		IsCustomAttr: false,
 	}
+}
+
+// IsValidCustomAttrName checks if the name is valid for custom attribute usage.
+// Valid names must start with an ASCII letter and contain only ASCII letters, numbers, and hyphens.
+func IsValidCustomAttrName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if i == 0 {
+			// First character must be a letter
+			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+				return false
+			}
+		} else {
+			// Subsequent characters can be letters, numbers, or hyphens
+			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-') {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// FindCustomAttrGAByName finds a global attribute with the given name that has isCustomAttr=true.
+// Returns nil if no such attribute exists.
+func FindCustomAttrGAByName(name string) (*GlobalAttr, error) {
+	attrs, err := av.ListGlobalAttributes()
+	if err != nil {
+		return nil, err
+	}
+	for _, attr := range attrs {
+		if attr != nil && attr.Key != nil && attr.Key.IsCustomAttr && attr.Key.Name == name {
+			return convertAttribute(attr), nil
+		}
+	}
+	return nil, nil
+}
+
+// CheckCustomAttrNameConflict checks if there's another GA with the same name that already has isCustomAttr=true.
+// Returns the conflicting GA ID if found, empty string otherwise.
+func CheckCustomAttrNameConflict(name string, excludeGaID string) (string, error) {
+	attrs, err := av.ListGlobalAttributes()
+	if err != nil {
+		return "", err
+	}
+	for _, attr := range attrs {
+		if attr == nil || attr.Key == nil {
+			continue
+		}
+		if attr.Key.IsCustomAttr && attr.Key.Name == name && attr.ID() != excludeGaID {
+			return attr.ID(), nil
+		}
+	}
+	return "", nil
 }

@@ -96,3 +96,54 @@ export const invalidateGlobalAttrCache = () => {
     cachedAttrs = null;
     inflight = null;
 };
+
+/**
+ * Checks if a name is valid for custom attribute usage.
+ * Valid names must start with an ASCII letter and contain only ASCII letters, numbers, and hyphens.
+ */
+export const isValidCustomAttrName = (name: string): boolean => {
+    if (!name || name.length === 0) {
+        return false;
+    }
+    // First character must be a letter
+    const first = name.charCodeAt(0);
+    if (!((first >= 65 && first <= 90) || (first >= 97 && first <= 122))) {
+        return false;
+    }
+    // Subsequent characters can be letters, numbers, or hyphens
+    for (let i = 1; i < name.length; i++) {
+        const c = name.charCodeAt(i);
+        if (!((c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c === 45)) {
+            return false;
+        }
+    }
+    return true;
+};
+
+/**
+ * Finds a global attribute with the given name that has isCustomAttr=true.
+ * Returns null if no such attribute exists.
+ */
+export const findCustomAttrGAByName = async (name: string): Promise<IGlobalAttrMeta | null> => {
+    const attrs = await getGlobalAttrs();
+    for (const attr of attrs) {
+        if (attr.isCustomAttr && attr.name === name) {
+            return attr;
+        }
+    }
+    return null;
+};
+
+/**
+ * Checks if there's another GA with the same name that already has isCustomAttr=true.
+ * Returns the conflicting GA if found, null otherwise.
+ */
+export const checkCustomAttrNameConflict = async (name: string, excludeGaId?: string): Promise<IGlobalAttrMeta | null> => {
+    const attrs = await getGlobalAttrs();
+    for (const attr of attrs) {
+        if (attr.isCustomAttr && attr.name === name && attr.gaId !== excludeGaId) {
+            return attr;
+        }
+    }
+    return null;
+};
