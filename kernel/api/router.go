@@ -261,6 +261,8 @@ func ServeAPI(ginServer *gin.Engine) {
 	ginServer.Handle("POST", "/api/globalattr/list", model.CheckAuth, listGlobalAttrs)
 	ginServer.Handle("POST", "/api/globalattr/create", model.CheckAuth, model.CheckReadonly, createGlobalAttr)
 	ginServer.Handle("POST", "/api/globalattr/markColumn", model.CheckAuth, model.CheckReadonly, markGlobalAttrColumn)
+	ginServer.Handle("POST", "/api/globalattr/bindBlock", model.CheckAuth, model.CheckReadonly, bindBlockToGlobalAttr)
+	ginServer.Handle("POST", "/api/globalattr/unbindBlock", model.CheckAuth, model.CheckReadonly, unbindBlockFromGlobalAttr)
 
 	ginServer.Handle("POST", "/api/cloud/getCloudSpace", model.CheckAuth, model.CheckAdminRole, getCloudSpace)
 

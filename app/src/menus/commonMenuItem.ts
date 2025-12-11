@@ -661,6 +661,7 @@ export const openFileAttr = (attrs: IObject, focusName = "bookmark", protyle?: I
                         showMessage(window.siyuan.languages.attrName + " <b>" + escapeHtml(normalizedName) + "</b> " + window.siyuan.languages.invalid);
                         return false;
                     }
+                    // 保持原有逻辑：直接在自定义区域添加输入框
                     customItemsElement.insertAdjacentHTML("beforeend", `<div class="b3-label b3-label--noborder">
     <div class="fn__flex">
         <span class="fn__flex-1">${normalizedName}</span>
@@ -690,7 +691,68 @@ export const openFileAttr = (attrs: IObject, focusName = "bookmark", protyle?: I
             event.preventDefault();
             break;
         case "addGlobalAttr":
-            showMessage(window.siyuan.languages.comingSoon || "Adding global attributes from here is under construction");
+            // 先获取块的属性，确定已绑定的全局属性
+            fetchPost("/api/attr/getBlockAttrs", {id: attrs.id}, (attrResp) => {
+                const blockAttrs = attrResp?.data || {};
+                const customGas = (blockAttrs["custom-gas"] || "") as string;
+                const boundGaIds = new Set<string>(
+                    customGas.split(",").map(s => s.trim()).filter(s => s !== "")
+                );
+                
+                // 获取所有全局属性列表
+                fetchPost("/api/globalattr/list", {}, (listResp) => {
+                    const allGAs = (listResp?.data?.attrs || []) as Array<{gaId: string, name: string, type: string, isCustomAttr: boolean}>;
+                    // 过滤出未绑定的自定义块属性类型的全局属性
+                    const availableGAs = allGAs.filter(ga => ga.isCustomAttr && !boundGaIds.has(ga.gaId));
+                    if (availableGAs.length === 0) {
+                        showMessage(window.siyuan.languages.noAvailableGlobalAttr || "No available global attributes to add");
+                        return;
+                    }
+                    // 创建选择对话框
+                    let optionsHtml = "";
+                    availableGAs.forEach(ga => {
+                        optionsHtml += `<button class="b3-list-item b3-list-item--two fn__block" data-ga-id="${ga.gaId}">
+                            <span class="b3-list-item__text">${escapeHtml(ga.name)}</span>
+                            <span class="b3-list-item__meta">${ga.type}</span>
+                        </button>`;
+                    });
+                    const selectDialog = new Dialog({
+                        title: window.siyuan.languages.addGlobalAttr || "Add Global Attribute",
+                        content: `<div class="b3-dialog__content">
+                            <div class="b3-list b3-list--background" style="max-height: 300px; overflow-y: auto;">
+                                ${optionsHtml}
+                            </div>
+                        </div>`,
+                        width: isMobile() ? "92vw" : "400px",
+                    });
+                    selectDialog.element.setAttribute("data-key", Constants.DIALOG_SELECTGLOBALATTR);
+                    selectDialog.element.addEventListener("click", (e) => {
+                        const targetItem = (e.target as HTMLElement).closest("[data-ga-id]") as HTMLElement;
+                        if (!targetItem) {
+                            return;
+                        }
+                        const selectedGaId = targetItem.dataset.gaId;
+                        if (!selectedGaId) {
+                            return;
+                        }
+                        // 绑定块与全局属性
+                        fetchPost("/api/globalattr/bindBlock", {
+                            blockID: attrs.id,
+                            gaId: selectedGaId
+                        }, () => {
+                            // 刷新属性面板
+                            if (avSectionElement && protyleCtx) {
+                                renderAVAttribute(avSectionElement, attrs.id, protyleCtx, (_element, tables) => {
+                                    const readonlySwitch = dialog.element.querySelector<HTMLInputElement>("[data-action='toggleReadonly']");
+                                    applyReadonlyFilter(!!readonlySwitch?.checked);
+                                    renderDedupSummary(tables);
+                                });
+                            }
+                            selectDialog.destroy();
+                        });
+                    });
+                });
+            });
             event.preventDefault();
             break;
         case "toggleReadonly":

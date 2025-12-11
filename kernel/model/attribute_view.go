@@ -1735,6 +1735,8 @@ func collectBuiltinBlockAttributeViewKeys(nodeID string) *BlockAttributeViewKeys
 	}
 	attrs := sql.GetBlockAttrs(nodeID)
 	keyValues := make([]*av.KeyValues, 0, len(builtinAttrSpecs))
+
+	// 1. 渲染内置属性
 	for _, spec := range builtinAttrSpecs {
 		if spec == nil || spec.attr == nil {
 			continue
@@ -1752,6 +1754,46 @@ func collectBuiltinBlockAttributeViewKeys(nodeID string) *BlockAttributeViewKeys
 		spec.hydrate(val, block, attrs)
 		keyValues = append(keyValues, &av.KeyValues{Key: key, Values: []*av.Value{val}})
 	}
+
+	// 2. 渲染 custom-gas 绑定的全局属性
+	customGas := attrs[av.NodeAttrGlobalAttrs]
+	if "" != customGas {
+		gaIDs := strings.Split(customGas, ",")
+		for _, gaID := range gaIDs {
+			gaID = strings.TrimSpace(gaID)
+			if "" == gaID {
+				continue
+			}
+			// 解析 GA 文件
+			gaAttr, err := av.ParseGlobalAttribute(gaID)
+			if nil != err || nil == gaAttr || nil == gaAttr.Key {
+				continue
+			}
+			// 找到该块对应的值
+			var blockValue *av.Value
+			for _, v := range gaAttr.Values {
+				if v.BlockRefID == nodeID {
+					blockValue = v.Clone()
+					break
+				}
+			}
+			// 如果没有值，创建一个空值
+			if nil == blockValue {
+				blockValue = &av.Value{
+					ID:         ast.NewNodeID(),
+					BlockRefID: nodeID,
+					BlockID:    nodeID,
+					Type:       gaAttr.Key.Type,
+				}
+				initValueByType(blockValue, gaAttr.Key.Type)
+			}
+			blockValue.KeyID = gaAttr.Key.ID
+			blockValue.BlockID = nodeID
+
+			keyValues = append(keyValues, &av.KeyValues{Key: gaAttr.Key, Values: []*av.Value{blockValue}})
+		}
+	}
+
 	return &BlockAttributeViewKeys{
 		AvID:      BuiltinAttrViewID,
 		AvName:    "",
@@ -5085,7 +5127,7 @@ func updateAttributeViewValue(tx *Transaction, attrView *av.AttributeView, keyID
 		updateTwoWayRelationDestAttrView(attrView, key, val, relationChangeMode, oldRelationBlockIDs)
 	}
 
-	if syncErr := syncGlobalAttrValue(tx, key, val, blockVal); nil != syncErr {
+	if syncErr := syncGlobalAttrValue(tx, avID, key, val, blockVal); nil != syncErr {
 		logging.LogWarnf("sync global attr value failed: %s", syncErr)
 		return nil, syncErr
 	}
@@ -5182,7 +5224,7 @@ func updateTwoWayRelationDestAttrView(attrView *av.AttributeView, relKey *av.Key
 	}
 }
 
-func syncGlobalAttrValue(tx *Transaction, key *av.Key, val *av.Value, blockVal *av.Value) error {
+func syncGlobalAttrValue(tx *Transaction, currentAvID string, key *av.Key, val *av.Value, blockVal *av.Value) error {
 	if key == nil || key.GaID == "" || val == nil {
 		return nil
 	}
@@ -5226,6 +5268,8 @@ func syncGlobalAttrValue(tx *Transaction, key *av.Key, val *av.Value, blockVal *
 			if attr.Key != nil && attr.Key.IsCustomAttr && IsValidCustomAttrName(attr.Key.Name) {
 				clearCustomAttrValue(tx, prev, attr.Key.Name)
 			}
+			// Refresh other AVs using this GA
+			refreshOtherAvsUsingGa(key.GaID, currentAvID)
 		}
 		return nil
 	}
@@ -5244,7 +5288,25 @@ func syncGlobalAttrValue(tx *Transaction, key *av.Key, val *av.Value, blockVal *
 		syncCustomAttrFromGAValue(tx, blockID, attr.Key, val)
 		updateBlockCustomGas(tx, blockID, attr.ID(), true)
 	}
+
+	// Refresh other AVs using this GA
+	refreshOtherAvsUsingGa(key.GaID, currentAvID)
 	return nil
+}
+
+// refreshOtherAvsUsingGa refreshes all AVs that use the specified global attribute, except the excluded one.
+// This function runs asynchronously to avoid blocking the main flow.
+func refreshOtherAvsUsingGa(gaID, excludeAvID string) {
+	if gaID == "" {
+		return
+	}
+	// Run asynchronously to avoid blocking
+	go func() {
+		avIDs := av.GetAvIDsByGaID(gaID, excludeAvID)
+		for _, avID := range avIDs {
+			ReloadAttrView(avID)
+		}
+	}()
 }
 
 // syncCustomAttrFromGAValue writes the GA value to the block's custom-{name} attribute.

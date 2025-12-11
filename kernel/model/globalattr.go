@@ -93,6 +93,18 @@ func CreateGlobalAttr(req *CreateGlobalAttrReq) (*GlobalAttr, error) {
 		return nil, errors.New("empty request")
 	}
 
+	// 如果是自定义块属性，先检查是否已存在同名的
+	if req.IsCustomAttr && "" == req.GaID {
+		existing, err := FindCustomAttrGAByName(req.Name)
+		if nil != err {
+			return nil, err
+		}
+		if nil != existing {
+			// 已存在同名的自定义块属性全局属性，直接返回
+			return existing, nil
+		}
+	}
+
 	keyType, err := normalizeKeyType(req.Type)
 	if nil != err {
 		return nil, err
@@ -416,4 +428,154 @@ func CheckCustomAttrNameConflict(name string, excludeGaID string) (string, error
 		}
 	}
 	return "", nil
+}
+
+// BindBlockToGlobalAttr binds a block to a global attribute.
+// This updates the block's custom-gas attribute and adds a value entry in the GA.
+func BindBlockToGlobalAttr(blockID, gaID string, initialValue interface{}) error {
+	if blockID == "" || gaID == "" {
+		return errors.New("blockID and gaID are required")
+	}
+
+	// Parse the global attribute
+	attr, err := av.ParseGlobalAttribute(gaID)
+	if err != nil {
+		return fmt.Errorf("failed to parse global attribute [%s]: %w", gaID, err)
+	}
+	if attr == nil || attr.Key == nil {
+		return fmt.Errorf("global attribute [%s] not found", gaID)
+	}
+
+	// Create initial value
+	val := &av.Value{
+		ID:         ast.NewNodeID(),
+		BlockRefID: blockID,
+		Type:       attr.Key.Type,
+	}
+
+	// If initial value is provided, try to set it
+	if initialValue != nil {
+		if data, err := gulu.JSON.MarshalJSON(initialValue); err == nil {
+			gulu.JSON.UnmarshalJSON(data, val)
+		}
+	}
+
+	// Initialize value based on type if not set
+	initValueByType(val, attr.Key.Type)
+
+	// Upsert value in GA
+	attr.UpsertValue(blockID, val)
+
+	// Save GA
+	if err := av.SaveGlobalAttribute(attr); err != nil {
+		return fmt.Errorf("failed to save global attribute: %w", err)
+	}
+
+	// Update block's custom-gas attribute
+	updateBlockCustomGas(nil, blockID, gaID, true)
+
+	// If isCustomAttr, also sync to block's custom attribute
+	if attr.Key.IsCustomAttr {
+		attrName := "custom-" + attr.Key.Name
+		serialized := serializeGAValueForCustomAttr(attr.Key, val)
+		if serialized != "" {
+			if err := writeBlockAttrs(nil, blockID, map[string]string{attrName: serialized}); err != nil {
+				logging.LogWarnf("sync custom attr [%s] to block [%s] failed: %s", attrName, blockID, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// UnbindBlockFromGlobalAttr unbinds a block from a global attribute.
+func UnbindBlockFromGlobalAttr(blockID, gaID string) error {
+	if blockID == "" || gaID == "" {
+		return errors.New("blockID and gaID are required")
+	}
+
+	// Parse the global attribute
+	attr, err := av.ParseGlobalAttribute(gaID)
+	if err != nil {
+		return fmt.Errorf("failed to parse global attribute [%s]: %w", gaID, err)
+	}
+	if attr == nil {
+		// GA doesn't exist, just update the block
+		updateBlockCustomGas(nil, blockID, gaID, false)
+		return nil
+	}
+
+	// Remove value from GA
+	attr.RemoveValue(blockID)
+
+	// Save GA
+	if err := av.SaveGlobalAttribute(attr); err != nil {
+		return fmt.Errorf("failed to save global attribute: %w", err)
+	}
+
+	// Update block's custom-gas attribute
+	updateBlockCustomGas(nil, blockID, gaID, false)
+
+	// If isCustomAttr, also clear block's custom attribute
+	if attr.Key != nil && attr.Key.IsCustomAttr {
+		attrName := "custom-" + attr.Key.Name
+		if err := writeBlockAttrs(nil, blockID, map[string]string{attrName: ""}); err != nil {
+			logging.LogWarnf("clear custom attr [%s] from block [%s] failed: %s", attrName, blockID, err)
+		}
+	}
+
+	return nil
+}
+
+// initValueByType initializes a value based on its type
+func initValueByType(val *av.Value, keyType av.KeyType) {
+	if val == nil {
+		return
+	}
+	switch keyType {
+	case av.KeyTypeText:
+		if val.Text == nil {
+			val.Text = &av.ValueText{}
+		}
+	case av.KeyTypeNumber:
+		if val.Number == nil {
+			val.Number = &av.ValueNumber{}
+		}
+	case av.KeyTypeDate:
+		if val.Date == nil {
+			val.Date = &av.ValueDate{}
+		}
+	case av.KeyTypeSelect, av.KeyTypeMSelect:
+		if val.MSelect == nil {
+			val.MSelect = []*av.ValueSelect{}
+		}
+	case av.KeyTypeURL:
+		if val.URL == nil {
+			val.URL = &av.ValueURL{}
+		}
+	case av.KeyTypeEmail:
+		if val.Email == nil {
+			val.Email = &av.ValueEmail{}
+		}
+	case av.KeyTypePhone:
+		if val.Phone == nil {
+			val.Phone = &av.ValuePhone{}
+		}
+	case av.KeyTypeMAsset:
+		if val.MAsset == nil {
+			val.MAsset = []*av.ValueAsset{}
+		}
+	case av.KeyTypeCheckbox:
+		if val.Checkbox == nil {
+			val.Checkbox = &av.ValueCheckbox{}
+		}
+	case av.KeyTypeRelation:
+		if val.Relation == nil {
+			val.Relation = &av.ValueRelation{}
+		}
+	case av.KeyTypeRollup:
+		if val.Rollup == nil {
+			val.Rollup = &av.ValueRollup{}
+		}
+	}
 }

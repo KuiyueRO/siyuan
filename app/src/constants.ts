@@ -221,6 +221,7 @@ export abstract class Constants {
     public static readonly DIALOG_STATEEXCEPTED = "dialog-stateexcepted"; // 状态异常
     public static readonly DIALOG_ATTR = "dialog-attr"; // 设置块属性
     public static readonly DIALOG_SETCUSTOMATTR = "dialog-setcustomattr"; // 设置自定义属性
+    public static readonly DIALOG_SELECTGLOBALATTR = "dialog-selectglobalattr"; // 选择全局属性
     public static readonly DIALOG_CREATENOTEBOOK = "dialog-createnotebook"; // 创建笔记本
     public static readonly DIALOG_NOTEBOOKCONF = "dialog-notebookconf"; // 笔记本设置
     public static readonly DIALOG_CREATEWORKSPACE = "dialog-createworkspace"; // 创建工作空间

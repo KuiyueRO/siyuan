@@ -215,3 +215,59 @@ func ListGlobalAttributes() ([]*GlobalAttribute, error) {
 	}
 	return ret, nil
 }
+
+// GetAvIDsByGaID scans all AV files and returns the IDs of AVs that use the specified global attribute.
+// The excludeAvID parameter allows excluding a specific AV (e.g., the one being edited).
+func GetAvIDsByGaID(gaID string, excludeAvID string) []string {
+	if gaID == "" {
+		return nil
+	}
+
+	avDir := filepath.Join(util.DataDir, "storage", "av")
+	entries, err := os.ReadDir(avDir)
+	if err != nil {
+		return nil
+	}
+
+	var result []string
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		// Skip relations.msgpack and other non-AV files
+		if !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+
+		avID := strings.TrimSuffix(entry.Name(), ".json")
+		if avID == excludeAvID {
+			continue
+		}
+
+		// Quick check: read the file and look for the gaID string
+		avPath := filepath.Join(avDir, entry.Name())
+		data, readErr := filelock.ReadFile(avPath)
+		if readErr != nil {
+			continue
+		}
+
+		// Simple string search for performance - if gaID appears in the file, it might be using this GA
+		if !strings.Contains(string(data), gaID) {
+			continue
+		}
+
+		// Parse and verify
+		attrView, parseErr := ParseAttributeView(avID)
+		if parseErr != nil {
+			continue
+		}
+
+		for _, kv := range attrView.KeyValues {
+			if kv.Key != nil && kv.Key.GaID == gaID {
+				result = append(result, avID)
+				break
+			}
+		}
+	}
+	return result
+}

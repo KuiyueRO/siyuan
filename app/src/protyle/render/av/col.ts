@@ -2253,7 +2253,9 @@ const scheduleMarkGlobalAttrColumn = (options: {
     if (!avID || !options.gaId) {
         return;
     }
-    const initialDelay = Math.max((Constants.TIMEOUT_INPUT || 200) * 2, 200);
+    // 增加初始延迟，确保 addAttrViewCol 事务完成后再尝试绑定全局属性
+    // 事务处理可能需要较长时间，特别是文件操作较慢时
+    const initialDelay = Math.max((Constants.TIMEOUT_INPUT || 200) * 4, 800);
     window.setTimeout(() => {
         markGlobalAttrColumn({
             avID,
@@ -2265,8 +2267,8 @@ const scheduleMarkGlobalAttrColumn = (options: {
     }, initialDelay);
 };
 
-const MAX_MARK_RETRY = 3;
-const MARK_RETRY_DELAY = 200;
+const MAX_MARK_RETRY = 5;
+const MARK_RETRY_DELAY = 400;
 
 const markGlobalAttrColumn = (options: {
     avID: string,
