@@ -6,7 +6,7 @@ import {getSearch, isMobile, isValidAttrName} from "../util/functions";
 import {isLocalPath, movePathTo, moveToPath, pathPosix} from "../util/pathName";
 import {MenuItem} from "./Menu";
 import {onExport, saveExport} from "../protyle/export";
-import {isInAndroid, isInHarmony, openByMobile, writeText} from "../protyle/util/compatibility";
+import {isInAndroid, isInHarmony, openByMobile, writeText, setStorageVal} from "../protyle/util/compatibility";
 import {fetchPost, fetchSyncPost} from "../util/fetch";
 import {hideMessage, showMessage} from "../dialog/message";
 import {Dialog} from "../dialog";
@@ -19,21 +19,214 @@ import * as dayjs from "dayjs";
 import {Constants} from "../constants";
 import {exportImage} from "../protyle/export/util";
 import {App} from "../index";
-import {renderAVAttribute} from "../protyle/render/av/blockAttr";
+import {renderAVAttribute, IAttrViewTableResponse} from "../protyle/render/av/blockAttr";
+import {addEditorToDatabase} from "../protyle/render/av/addToDatabase";
 import {openAssetNewWindow} from "../window/openNewWindow";
-import {escapeHtml} from "../util/escape";
+import {escapeAttr, escapeHtml} from "../util/escape";
 import {copyTextByType} from "../protyle/toolbar/util";
 import {hideElements} from "../protyle/ui/hideElements";
 import {Protyle} from "../protyle";
 import {getAllEditor} from "../layout/getAll";
+import {Menu as PopupMenu} from "../plugin/Menu";
+import {BUILTIN_ATTR_VIEW_ID} from "../protyle/render/av/globalAttr";
+import {
+    IAttrPanelAggregateResponse,
+    IAttrPanelCustomAttrValue,
+    IAttrPanelDedupItem,
+    IAttrPanelDedupSource,
+    IAttrPanelPreferences,
+    IAttrPanelViewBinding,
+    TAttrPanelFieldTarget,
+    TAttrPanelMode,
+    TAttrPanelSortKey
+} from "../types/attrPanel";
+import {buildAttrPanelDedupItems, buildAttrPanelViewBindingsFromTables} from "./attrPanel/dataBuilder";
+import {buildAttrPanelAggregateResponse} from "./attrPanel/aggregateBuilder";
 
-const bindAttrInput = (inputElement: HTMLInputElement, id: string) => {
-    inputElement.addEventListener("change", () => {
+const bindAttrInput = (inputElement: HTMLInputElement | HTMLTextAreaElement, id: string) => {
+    if (!inputElement) {
+        return;
+    }
+    const attrName = inputElement.dataset.name;
+    if (!attrName) {
+        return;
+    }
+
+    const resizeTextarea = () => {
+        if (inputElement instanceof HTMLTextAreaElement) {
+            inputElement.style.height = "auto";
+            inputElement.style.height = `${inputElement.scrollHeight}px`;
+        }
+    };
+    resizeTextarea();
+
+    let lastSavedValue = inputElement.value;
+    let debounceId = 0;
+    const persistValue = () => {
+        const currentValue = inputElement.value;
+        if (currentValue === lastSavedValue) {
+            return;
+        }
+        lastSavedValue = currentValue;
         fetchPost("/api/attr/setBlockAttrs", {
             id,
-            attrs: {[inputElement.dataset.name]: inputElement.value}
+            attrs: {[attrName]: currentValue}
         });
+    };
+    const schedulePersist = () => {
+        if (debounceId) {
+            window.clearTimeout(debounceId);
+        }
+        debounceId = window.setTimeout(persistValue, 400);
+    };
+
+    inputElement.addEventListener("input", () => {
+        resizeTextarea();
+        schedulePersist();
     });
+    inputElement.addEventListener("blur", () => {
+        if (debounceId) {
+            window.clearTimeout(debounceId);
+        }
+        persistValue();
+    });
+};
+
+const ATTR_PANEL_SORT_VALUES: TAttrPanelSortKey[] = ["custom", "nameAsc", "nameDesc", "createdAsc", "createdDesc", "updatedAsc", "updatedDesc"];
+const ATTR_PANEL_SORT_GROUPS: TAttrPanelSortKey[][] = [["custom"], ["nameAsc", "nameDesc"], ["createdAsc", "createdDesc"], ["updatedAsc", "updatedDesc"]];
+
+const createAttrPanelPreferenceDefaults = (): IAttrPanelPreferences => ({
+    mode: "grouped",
+    sort: "custom",
+    showReadonlyBuiltin: false,
+    customOrder: {}
+});
+
+const ensureAttrPanelPreferences = (): IAttrPanelPreferences => {
+    if (!window.siyuan.storage) {
+        window.siyuan.storage = {} as IObject;
+    }
+    const stored = window.siyuan.storage[Constants.LOCAL_ATTR_PANEL];
+    if (!stored || typeof stored !== "object") {
+        const defaults = createAttrPanelPreferenceDefaults();
+        window.siyuan.storage[Constants.LOCAL_ATTR_PANEL] = defaults;
+        setStorageVal(Constants.LOCAL_ATTR_PANEL, defaults);
+        return defaults;
+    }
+    if (stored.mode !== "grouped" && stored.mode !== "dedup") {
+        stored.mode = "grouped";
+    }
+    if (!ATTR_PANEL_SORT_VALUES.includes(stored.sort)) {
+        stored.sort = "custom";
+    }
+    if (typeof stored.showReadonlyBuiltin !== "boolean") {
+        stored.showReadonlyBuiltin = false;
+    }
+    if (!stored.customOrder || typeof stored.customOrder !== "object") {
+        stored.customOrder = {};
+    }
+    return stored as IAttrPanelPreferences;
+};
+
+const mergeCustomOrder = (currentOrder: Record<string, string[]>, patch?: Record<string, string[]>) => {
+    const nextOrder: Record<string, string[]> = {};
+    Object.keys(currentOrder || {}).forEach(key => {
+        const list = currentOrder[key];
+        nextOrder[key] = Array.isArray(list) ? list.slice() : [];
+    });
+    if (patch) {
+        Object.keys(patch).forEach(key => {
+            const list = patch[key];
+            if (!list || list.length === 0) {
+                delete nextOrder[key];
+            } else {
+                nextOrder[key] = list.slice();
+            }
+        });
+    }
+    return nextOrder;
+};
+
+const persistAttrPanelPreferences = (patch: Partial<IAttrPanelPreferences>) => {
+    const current = ensureAttrPanelPreferences();
+    const next: IAttrPanelPreferences = {
+        ...current,
+        ...patch,
+        customOrder: mergeCustomOrder(current.customOrder, patch.customOrder)
+    };
+    window.siyuan.storage[Constants.LOCAL_ATTR_PANEL] = next;
+    setStorageVal(Constants.LOCAL_ATTR_PANEL, next);
+    return next;
+};
+
+const getAttrPanelSortLabel = (sortKey: TAttrPanelSortKey, languages: IObject) => {
+    const nameAsc = languages?.fileNameASC || languages?.nameAsc || "名称 ↑";
+    const nameDesc = languages?.fileNameDESC || languages?.nameDesc || "名称 ↓";
+    const custom = languages?.customSort || languages?.custom || languages?.sort || "自定义排序";
+    const createdAsc = languages?.createdASC || "创建时间 ↑";
+    const createdDesc = languages?.createdDESC || "创建时间 ↓";
+    const updatedAsc = languages?.modifiedASC || languages?.updatedASC || "更新时间 ↑";
+    const updatedDesc = languages?.modifiedDESC || languages?.updatedDESC || "更新时间 ↓";
+    const labelMap: Record<TAttrPanelSortKey, string> = {
+        custom,
+        nameAsc,
+        nameDesc,
+        createdAsc,
+        createdDesc,
+        updatedAsc,
+        updatedDesc
+    };
+    return labelMap[sortKey] || custom;
+};
+
+export const setAttrPanelCustomOrder = (blockId: string, order: string[]) => {
+    persistAttrPanelPreferences({customOrder: {[blockId]: Array.isArray(order) ? order.slice() : []}});
+};
+
+export const getAttrPanelCustomOrder = (blockId: string) => {
+    const prefs = ensureAttrPanelPreferences();
+    const order = prefs.customOrder?.[blockId];
+    return Array.isArray(order) ? order.slice() : [];
+};
+
+interface IAttrPanelState {
+    avTables: IAttrViewTableResponse[];
+    viewBindings: IAttrPanelViewBinding[];
+    dedupItems: IAttrPanelDedupItem[];
+    aggregate?: IAttrPanelAggregateResponse;
+}
+
+const buildJumpTargetAttrs = (source?: IAttrPanelDedupSource): string => {
+    if (!source) {
+        return "disabled";
+    }
+    const base = "data-action=\"jumpField\"";
+    if (source.targetType === "custom") {
+        return `${base} data-target-type="custom" data-custom-name="${escapeAttr(source.customName || "")}"`;
+    }
+    return `${base} data-target-type="av" data-av-id="${escapeAttr(source.avId || "")}" data-key-id="${escapeAttr(source.keyId || "")}"`;
+};
+
+const renderAttrPanelDedupHtml = (fields: IAttrPanelDedupItem[], languages: IObject) => {
+    if (!fields || fields.length === 0) {
+        const emptyText = languages.empty || window.siyuan.languages.empty || window.siyuan.languages.notFound || "暂无属性";
+        return `<div class="b3-label__text">${escapeHtml(emptyText)}</div>`;
+    }
+    return fields.map(field => {
+        const firstSource = field.sources[0];
+        const chips = field.sources.map(source => {
+            const attrs = buildJumpTargetAttrs(source);
+            return `<button class="b3-chip b3-chip--small attr-panel__dedup-chip" type="button" ${attrs}>${escapeHtml(source.label || languages.location || "定位")}</button>`;
+        }).join("");
+        const desc = field.desc ? `<div class="attr-panel__dedup-desc">${escapeHtml(field.desc)}</div>` : "";
+        return `<div class="attr-panel__dedup-item" data-field-id="${escapeAttr(field.id)}">
+    <div class="attr-panel__dedup-head">
+        <button class="b3-button b3-button--text attr-panel__dedup-name" type="button" ${buildJumpTargetAttrs(firstSource)}>${escapeHtml(field.name)}</button>
+    </div>
+    ${desc}
+    <div class="attr-panel__dedup-sources">${chips}</div>
+</div>`;
+    }).join("");
 };
 
 export const openWechatNotify = (nodeElement: Element) => {
@@ -160,7 +353,7 @@ export const openFileWechatNotify = (protyle: IProtyle) => {
 export const openFileAttr = (attrs: IObject, focusName = "bookmark", protyle?: IProtyle) => {
     let customHTML = "";
     let notifyHTML = "";
-    let hasAV = false;
+    let customFieldEntries: IAttrPanelCustomAttrValue[] = [];
     const range = getSelection().rangeCount > 0 ? getSelection().getRangeAt(0) : null;
     let ghostProtyle: Protyle;
     if (!protyle) {
@@ -186,9 +379,8 @@ export const openFileAttr = (attrs: IObject, focusName = "bookmark", protyle?: I
     <div class="fn__hr"></div>
     <input class="b3-text-field fn__block" type="datetime-local" max="9999-12-31 23:59" readonly data-name="${item}" value="${dayjs(attrs[item]).format("YYYY-MM-DD HH:mm")}">
 </label>`;
-        } else if (item.indexOf("custom-av") > -1) {
-            hasAV = true;
         } else if (item.indexOf("custom") > -1) {
+            customFieldEntries.push({name: item, label: item.replace("custom-", ""), value: attrs[item] || ""});
             customHTML += `<label class="b3-label b3-label--noborder">
      <div class="fn__flex">
         <span class="fn__flex-1">${item.replace("custom-", "")}</span>
@@ -199,137 +391,249 @@ export const openFileAttr = (attrs: IObject, focusName = "bookmark", protyle?: I
 </label>`;
         }
     });
+    const languages = window.siyuan.languages;
+    let attrPanelPrefs = ensureAttrPanelPreferences();
+    const groupedLabel = languages.attrPanelGrouped || languages.groupedView || languages.category || "分类";
+    const dedupLabel = languages.attrPanelDedup || languages.dedupView || "不重复";
+    const sortLabel = languages.sort || "Sort";
+    const addGaLabel = languages.addGlobalAttr || languages.globalAttr || "添加全局属性";
+    const addDbLabel = languages.addToDatabase || "添加到数据库";
+    const customLabel = languages.custom || "自定义";
+    const showReadonlyLabel = languages.showReadonlyBuiltin || "显示只读内置属性";
+    const panelTitle = languages.attr || languages.attrPanel || languages.globalAttr || window.siyuan.languages.attr;
     const dialog = new Dialog({
         width: isMobile() ? "92vw" : "50vw",
         containerClassName: "b3-dialog__container--theme",
         height: "80vh",
-        content: `<div class="fn__flex-column">
-    <div class="layout-tab-bar fn__flex" style="flex-shrink:0;border-radius: var(--b3-border-radius-b) var(--b3-border-radius-b) 0 0">
-        <div class="item item--full item--focus" data-type="attr">
-            <span class="fn__flex-1"></span>
-            <span class="item__text">${window.siyuan.languages.builtIn}</span>
-            <span class="fn__flex-1"></span>
+        title: panelTitle,
+        content: `<div class="b3-dialog__content attr-panel" data-panel-mode="${attrPanelPrefs.mode}">
+    <div class="attr-panel__toolbar">
+        <button class="b3-button b3-button--text" data-action="openSortMenu">
+            <svg><use xlink:href="#iconSort"></use></svg>
+            <span data-role="sort-label">${sortLabel}</span>
+        </button>
+        <div class="layout-tab-bar layout-tab-bar--small">
+            <div class="item item--small${attrPanelPrefs.mode === "grouped" ? " item--focus" : ""}" data-action="switchMode" data-mode="grouped">
+                <span class="item__text">${groupedLabel}</span>
+            </div>
+            <div class="item item--small${attrPanelPrefs.mode === "dedup" ? " item--focus" : ""}" data-action="switchMode" data-mode="dedup">
+                <span class="item__text">${dedupLabel}</span>
+            </div>
         </div>
-        <div class="item item--full${hasAV ? "" : " fn__none"}" data-type="NodeAttributeView">
-            <span class="fn__flex-1"></span>
-            <span class="item__text">${window.siyuan.languages.database}</span>
-            <span class="fn__flex-1"></span>
-        </div>
-        <div class="item item--full" data-type="custom">
-            <span class="fn__flex-1"></span>
-            <span class="item__text">${window.siyuan.languages.custom}</span>
-            <span class="fn__flex-1"></span>
-        </div>
+        <div class="fn__flex-1"></div>
     </div>
-    <div class="fn__flex-1">
-        <div class="custom-attr" data-type="attr">
-            <label class="b3-label b3-label--noborder">
-                <div class="fn__flex">
-                    <span class="fn__flex-1">${window.siyuan.languages.bookmark}</span>
-                    <span data-action="bookmark" class="block__icon block__icon--show"><svg><use xlink:href="#iconDown"></use></svg></span>
+    <div class="attr-panel__body" data-role="panel-body">
+        <div class="attr-panel__view attr-panel__view--grouped" data-role="grouped-view">
+            <section class="attr-panel__section attr-panel__section--av" data-section="av"></section>
+            <section class="attr-panel__section attr-panel__section--custom" data-section="custom">
+                <header class="attr-panel__section-head">
+                    <div class="attr-panel__section-title">${customLabel}</div>
+                    <button data-action="addCustom" class="b3-button b3-button--outline attr-panel__add-custom">
+                        <svg><use xlink:href="#iconAdd"></use></svg>${languages.addAttr}
+                    </button>
+                </header>
+                <div class="attr-panel__custom-list" data-role="custom-list">
+                    <div class="attr-panel__custom-items" data-role="custom-items">
+                        ${customHTML}
+                    </div>
+                    ${notifyHTML ? `<div class="attr-panel__custom-notify">${notifyHTML}</div>` : ""}
                 </div>
-                <div class="fn__hr"></div>
-                <input spellcheck="${window.siyuan.config.editor.spellcheck}" class="b3-text-field fn__block" placeholder="${window.siyuan.languages.attrBookmarkTip}" data-name="bookmark">
-            </label>
-            <label class="b3-label b3-label--noborder">
-                ${window.siyuan.languages.name}
-                <div class="fn__hr"></div>
-                <input spellcheck="${window.siyuan.config.editor.spellcheck}" class="b3-text-field fn__block" placeholder="${window.siyuan.languages.attrNameTip}" data-name="name">
-            </label>
-            <label class="b3-label b3-label--noborder">
-                ${window.siyuan.languages.alias}
-                <div class="fn__hr"></div>
-                <input spellcheck="${window.siyuan.config.editor.spellcheck}" class="b3-text-field fn__block" placeholder="${window.siyuan.languages.attrAliasTip}" data-name="alias">
-            </label>
-            <label class="b3-label b3-label--noborder">
-                ${window.siyuan.languages.memo}
-                <div class="fn__hr"></div>
-                <textarea style="resize: vertical" spellcheck="${window.siyuan.config.editor.spellcheck}" class="b3-text-field fn__block" placeholder="${window.siyuan.languages.attrMemoTip}" rows="2" data-name="memo">${attrs.memo || ""}</textarea>
-            </label>
-            ${notifyHTML}
+            </section>
         </div>
-        <div data-type="NodeAttributeView" class="fn__none custom-attr"></div>
-        <div data-type="custom" class="fn__none custom-attr">
-           ${customHTML}
-           <div class="b3-label">
-               <button data-action="addCustom" class="b3-button b3-button--cancel">
-                   <svg><use xlink:href="#iconAdd"></use></svg>${window.siyuan.languages.addAttr}
-               </button>
-           </div>
-        </div>
+        <div class="attr-panel__view attr-panel__view--dedup fn__none" data-role="dedup-view"></div>
     </div>
+</div>
+<div class="b3-dialog__action attr-panel__footer">
+    <button data-action="addToDatabase" class="b3-button b3-button--text">
+        <svg><use xlink:href="#iconDatabase"></use></svg>${addDbLabel}
+    </button>
+    <button data-action="addGlobalAttr" class="b3-button b3-button--text">
+        <svg><use xlink:href="#iconAttr"></use></svg>${addGaLabel}
+    </button>
+    <div class="fn__flex-1"></div>
+    <label class="b3-label b3-label--noborder attr-panel__readonly-toggle">
+        <input type="checkbox" class="b3-switch" data-action="toggleReadonly" ${attrPanelPrefs.showReadonlyBuiltin ? "checked" : ""}>
+        <span>${showReadonlyLabel}</span>
+    </label>
 </div>`,
         destroyCallback() {
             focusByRange(range);
             if (protyle) {
                 hideElements(["select"], protyle);
             } else {
-                ghostProtyle.destroy();
+                ghostProtyle?.destroy();
             }
         }
     });
-    dialog.element.setAttribute("data-key", Constants.DIALOG_ATTR);
-    (dialog.element.querySelector('.b3-text-field[data-name="bookmark"]') as HTMLInputElement).value = attrs.bookmark || "";
-    (dialog.element.querySelector('.b3-text-field[data-name="name"]') as HTMLInputElement).value = attrs.name || "";
-    (dialog.element.querySelector('.b3-text-field[data-name="alias"]') as HTMLInputElement).value = attrs.alias || "";
-    dialog.element.addEventListener("click", (event) => {
-        let target = event.target as HTMLElement;
-        if (typeof event.detail === "string") {
-            target = dialog.element.querySelector(`.item--full[data-type="${event.detail}"]`);
+
+    const groupedViewElement = dialog.element.querySelector<HTMLElement>('[data-role="grouped-view"]');
+    const dedupViewElement = dialog.element.querySelector<HTMLElement>('[data-role="dedup-view"]');
+    const avSectionElement = dialog.element.querySelector('[data-section="av"]') as HTMLElement;
+    const customItemsElement = dialog.element.querySelector<HTMLElement>('[data-role="custom-items"]');
+
+    const updateViewModeVisibility = (mode: TAttrPanelMode) => {
+        groupedViewElement?.classList.toggle("fn__none", mode === "dedup");
+        dedupViewElement?.classList.toggle("fn__none", mode !== "dedup");
+    };
+    updateViewModeVisibility(attrPanelPrefs.mode);
+
+    const attrPanelState: IAttrPanelState = {
+        avTables: [],
+        viewBindings: [],
+        dedupItems: []
+    };
+    const renderDedupSummary = (tables?: IAttrViewTableResponse[]) => {
+        if (tables) {
+            attrPanelState.avTables = tables;
         }
-        while (target !== dialog.element) {
-            const type = target.dataset.action;
-            if (target.classList.contains("item--full")) {
-                target.parentElement.querySelector(".item--focus").classList.remove("item--focus");
-                target.classList.add("item--focus");
-                dialog.element.querySelectorAll(".custom-attr").forEach((item: HTMLElement) => {
-                    if (item.dataset.type === target.dataset.type) {
-                        if (item.dataset.type === "NodeAttributeView" && item.innerHTML === "") {
-                            renderAVAttribute(item, attrs.id, protyle || ghostProtyle.protyle);
+        attrPanelState.viewBindings = buildAttrPanelViewBindingsFromTables(attrPanelState.avTables, languages);
+        attrPanelState.dedupItems = buildAttrPanelDedupItems(attrPanelState.viewBindings, customFieldEntries, languages);
+        attrPanelState.aggregate = buildAttrPanelAggregateResponse(attrs.id, attrPanelState.avTables, customFieldEntries, languages, {
+            prebuiltViewBindings: attrPanelState.viewBindings,
+            prebuiltDedupItems: attrPanelState.dedupItems
+        });
+        if (dedupViewElement) {
+            dedupViewElement.innerHTML = renderAttrPanelDedupHtml(attrPanelState.dedupItems, languages);
+        }
+    };
+    renderDedupSummary();
+    dialog.element.setAttribute("data-key", Constants.DIALOG_ATTR);
+    dialog.element.setAttribute("data-sort-mode", attrPanelPrefs.sort);
+    dialog.element.setAttribute("data-show-readonly", attrPanelPrefs.showReadonlyBuiltin ? "1" : "0");
+    const sortLabelSpan = dialog.element.querySelector<HTMLSpanElement>('[data-role="sort-label"]');
+    const updateSortButtonLabel = () => {
+        if (sortLabelSpan) {
+            sortLabelSpan.textContent = `${sortLabel} · ${getAttrPanelSortLabel(attrPanelPrefs.sort, languages)}`;
+        }
+        dialog.element.setAttribute("data-sort-mode", attrPanelPrefs.sort);
+    };
+    updateSortButtonLabel();
+    const showSortMenu = (trigger: HTMLElement) => {
+        const menu = new PopupMenu(Constants.MENU_ATTR_PANEL_SORT);
+        if (menu.isOpen) {
+            return;
+        }
+        menu.element.classList.add("b3-menu--list");
+        ATTR_PANEL_SORT_GROUPS.forEach((group, index) => {
+            if (index !== 0) {
+                menu.addSeparator();
+            }
+            group.forEach(sortKey => {
+                menu.addItem({
+                    icon: attrPanelPrefs.sort === sortKey ? "iconSelect" : undefined,
+                    label: getAttrPanelSortLabel(sortKey, languages),
+                    click: () => {
+                        if (attrPanelPrefs.sort === sortKey) {
+                            return;
                         }
-                        item.classList.remove("fn__none");
-                    } else {
-                        item.classList.add("fn__none");
+                        attrPanelPrefs = persistAttrPanelPreferences({sort: sortKey});
+                        updateSortButtonLabel();
                     }
                 });
-            } else if (type === "remove") {
+            });
+        });
+        const rect = trigger.getBoundingClientRect();
+        menu.open({
+            x: rect.left,
+            y: rect.bottom + 4
+        });
+    };
+    const readonlySwitchElement = dialog.element.querySelector<HTMLInputElement>("[data-action='toggleReadonly']");
+    if (readonlySwitchElement) {
+        readonlySwitchElement.checked = !!attrPanelPrefs.showReadonlyBuiltin;
+    }
+
+    const protyleCtx = protyle || ghostProtyle?.protyle;
+    const applyReadonlyFilter = (showReadonly: boolean) => {
+        avSectionElement?.querySelectorAll<HTMLElement>(`[data-av-id="${BUILTIN_ATTR_VIEW_ID}"] .av__row`).forEach(row => {
+            const writable = row.querySelector("[data-ga-writable]")?.getAttribute("data-ga-writable") === "true";
+            row.classList.toggle("fn__none", !showReadonly && !writable);
+        });
+    };
+    const focusAvByName = (name: string) => {
+        if (!name || !avSectionElement) {
+            return;
+        }
+        const encoded = escapeAttr(name);
+        const targetCell = Array.from(avSectionElement.querySelectorAll<HTMLElement>("[data-col-name]")).find(cell => cell.getAttribute("data-col-name") === encoded);
+        if (targetCell) {
+            const input = targetCell.querySelector<HTMLInputElement | HTMLTextAreaElement>("input,textarea");
+            if (input) {
+                input.focus();
+            } else {
+                (targetCell as HTMLElement).focus?.();
+            }
+            targetCell.scrollIntoView({block: "center"});
+        }
+    };
+    if (protyleCtx && avSectionElement) {
+        renderAVAttribute(avSectionElement, attrs.id, protyleCtx, (_element, tables) => {
+            const readonlySwitch = dialog.element.querySelector<HTMLInputElement>("[data-action='toggleReadonly']");
+            applyReadonlyFilter(!!readonlySwitch?.checked);
+            if (focusName && focusName !== "custom" && focusName !== "av") {
+                focusAvByName(focusName);
+            }
+            renderDedupSummary(tables);
+        });
+    }
+
+    if (focusName === "custom") {
+        dialog.element.querySelector<HTMLInputElement | HTMLTextAreaElement>('[data-section="custom"] textarea, [data-section="custom"] input')?.focus();
+    } else if (focusName === "av") {
+        avSectionElement?.querySelector<HTMLElement>(`[data-av-id]:not([data-av-id="${BUILTIN_ATTR_VIEW_ID}"])`)?.scrollIntoView({block: "start"});
+    }
+
+    const handleAddToDatabase = () => {
+        if (!protyleCtx) {
+            return;
+        }
+        let selectionRange = range;
+        if (!selectionRange) {
+            const selection = getSelection();
+            if (selection && selection.rangeCount > 0) {
+                selectionRange = selection.getRangeAt(0);
+            }
+        }
+        if (!selectionRange) {
+            const fallbackRange = document.createRange();
+            fallbackRange.selectNodeContents(protyleCtx?.wysiwyg?.element || document.body);
+            selectionRange = fallbackRange;
+        }
+        addEditorToDatabase(protyleCtx, selectionRange);
+    };
+
+    dialog.element.addEventListener("click", (event) => {
+        const actionEl = (event.target as HTMLElement).closest("[data-action]") as HTMLElement;
+        if (!actionEl) {
+            return;
+        }
+        const action = actionEl.dataset.action;
+        switch (action) {
+        case "openSortMenu":
+            showSortMenu(actionEl);
+            event.preventDefault();
+            break;
+        case "remove":
                 fetchPost("/api/attr/setBlockAttrs", {
                     id: attrs.id,
-                    attrs: {["custom-" + target.previousElementSibling.textContent]: ""}
+                attrs: {["custom-" + actionEl.previousElementSibling.textContent]: ""}
                 });
-                target.parentElement.parentElement.remove();
-                event.stopPropagation();
+            actionEl.parentElement.parentElement.remove();
+            {
+                const removedLabel = actionEl.previousElementSibling?.textContent?.trim();
+                if (removedLabel) {
+                    const removedKey = `custom-${removedLabel}`;
+                    customFieldEntries = customFieldEntries.filter(entry => entry.name !== removedKey);
+                    renderDedupSummary();
+                }
+            }
+            event.preventDefault();
+            break;
+        case "addCustom": {
+            if (!customItemsElement) {
                 event.preventDefault();
                 break;
-            } else if (type === "bookmark") {
-                fetchPost("/api/attr/getBookmarkLabels", {}, (response) => {
-                    window.siyuan.menus.menu.remove();
-                    if (response.data.length === 0) {
-                        window.siyuan.menus.menu.append(new MenuItem({
-                            id: "emptyContent",
-                            iconHTML: "",
-                            label: window.siyuan.languages.emptyContent,
-                            type: "readonly",
-                        }).element);
-                    } else {
-                        response.data.forEach((item: string) => {
-                            window.siyuan.menus.menu.append(new MenuItem({
-                                label: item,
-                                click() {
-                                    const bookmarkInputElement = target.parentElement.parentElement.querySelector("input");
-                                    bookmarkInputElement.value = item;
-                                    bookmarkInputElement.dispatchEvent(new CustomEvent("change"));
-                                }
-                            }).element);
-                        });
-                    }
-                    window.siyuan.menus.menu.element.classList.add("b3-menu--list");
-                    window.siyuan.menus.menu.popup({x: event.clientX, y: event.clientY + 16, w: 16});
-                });
-                event.stopPropagation();
-                event.preventDefault();
-                break;
-            } else if (type === "addCustom") {
+            }
                 const addDialog = new Dialog({
                     title: window.siyuan.languages.attrName,
                     content: `<div class="b3-dialog__content"><input spellcheck="false" class="b3-text-field fn__block" value=""></div>
@@ -351,41 +655,97 @@ export const openFileAttr = (attrs: IObject, focusName = "bookmark", protyle?: I
                     addDialog.destroy();
                 });
                 btnsElement[1].addEventListener("click", () => {
-                    if (!isValidAttrName(inputElement.value)) {
-                        showMessage(window.siyuan.languages.attrName + " <b>" + escapeHtml(inputElement.value) + "</b> " + window.siyuan.languages.invalid);
+                    const normalizedName = inputElement.value.trim();
+                    inputElement.value = normalizedName;
+                    if (!isValidAttrName(normalizedName)) {
+                        showMessage(window.siyuan.languages.attrName + " <b>" + escapeHtml(normalizedName) + "</b> " + window.siyuan.languages.invalid);
                         return false;
                     }
-                    target.parentElement.insertAdjacentHTML("beforebegin", `<div class="b3-label b3-label--noborder">
+                    customItemsElement.insertAdjacentHTML("beforeend", `<div class="b3-label b3-label--noborder">
     <div class="fn__flex">
-        <span class="fn__flex-1">${inputElement.value}</span>
+        <span class="fn__flex-1">${normalizedName}</span>
         <span data-action="remove" class="block__icon block__icon--show"><svg><use xlink:href="#iconMin"></use></svg></span>
     </div>
     <div class="fn__hr"></div>
-    <textarea style="resize: vertical" spellcheck="false" data-name="custom-${inputElement.value}" class="b3-text-field fn__block" rows="1" placeholder="${window.siyuan.languages.attrValue1}"></textarea>
+    <textarea style="resize: vertical" spellcheck="false" data-name="custom-${normalizedName}" class="b3-text-field fn__block" rows="1" placeholder="${window.siyuan.languages.attrValue1}"></textarea>
 </div>`);
-                    const valueElement = target.parentElement.previousElementSibling.querySelector(".b3-text-field") as HTMLInputElement;
-                    valueElement.focus();
-                    bindAttrInput(valueElement, attrs.id);
+                    const newFieldElement = customItemsElement.lastElementChild as HTMLElement;
+                    const valueElement = newFieldElement?.querySelector(".b3-text-field") as HTMLTextAreaElement;
+                    if (valueElement) {
+                        valueElement.focus();
+                        bindAttrInput(valueElement, attrs.id);
+                    }
+                    const attrKey = `custom-${normalizedName}`;
+                    if (!customFieldEntries.find(entry => entry.name === attrKey)) {
+                        customFieldEntries.push({name: attrKey, label: normalizedName, value: ""});
+                        renderDedupSummary();
+                    }
                     addDialog.destroy();
                 });
-                event.stopPropagation();
                 event.preventDefault();
                 break;
             }
-            target = target.parentElement;
+        case "addToDatabase":
+            handleAddToDatabase();
+            event.preventDefault();
+            break;
+        case "addGlobalAttr":
+            showMessage(window.siyuan.languages.comingSoon || "Adding global attributes from here is under construction");
+            event.preventDefault();
+            break;
+        case "toggleReadonly":
+            {
+                const showReadonly = (actionEl as HTMLInputElement).checked;
+                applyReadonlyFilter(showReadonly);
+                attrPanelPrefs = persistAttrPanelPreferences({showReadonlyBuiltin: showReadonly});
+                dialog.element.setAttribute("data-show-readonly", showReadonly ? "1" : "0");
+            }
+            break;
+        case "switchMode":
+            {
+                const nextMode = (actionEl.dataset.mode as TAttrPanelMode) || "grouped";
+                if (nextMode !== attrPanelPrefs.mode) {
+                    dialog.element.setAttribute("data-panel-mode", nextMode);
+                    attrPanelPrefs = persistAttrPanelPreferences({mode: nextMode});
+                }
+                const modeBar = actionEl.parentElement;
+                modeBar?.querySelectorAll(".item").forEach(btn => btn.classList.remove("item--focus"));
+                actionEl.classList.add("item--focus");
+                updateViewModeVisibility(nextMode);
+            }
+            break;
+        case "jumpField":
+            {
+                const targetType = (actionEl.dataset.targetType as TAttrPanelFieldTarget) || "av";
+                let targetElement: HTMLElement | null = null;
+                if (targetType === "custom") {
+                    const customName = actionEl.dataset.customName;
+                    if (customName) {
+                        targetElement = dialog.element.querySelector(`[data-section="custom"] [data-name="${customName}"]`) as HTMLElement;
+                    }
+                } else {
+                    const avId = actionEl.dataset.avId;
+                    const keyId = actionEl.dataset.keyId;
+                    if (avId && keyId && avSectionElement) {
+                        targetElement = avSectionElement.querySelector(`[data-av-id="${avId}"] .av__row[data-col-id="${keyId}"]`) as HTMLElement;
+                    }
+                }
+                if (targetElement) {
+                    targetElement.scrollIntoView({block: "center"});
+                    if (targetElement instanceof HTMLInputElement || targetElement instanceof HTMLTextAreaElement) {
+                        targetElement.focus();
+                    } else {
+                        targetElement.querySelector<HTMLInputElement | HTMLTextAreaElement>("input,textarea")?.focus();
+                    }
+                }
+                event.preventDefault();
+            }
+            break;
         }
     });
-    dialog.element.querySelectorAll(".b3-text-field").forEach((item: HTMLInputElement) => {
-        if (focusName !== "av" && focusName !== "custom" && focusName === item.getAttribute("data-name")) {
-            item.focus();
-        }
+    dialog.element.querySelectorAll<HTMLTextAreaElement>('[data-section="custom"] textarea[data-name]').forEach(item => {
         bindAttrInput(item, attrs.id);
     });
-    if (focusName === "av") {
-        dialog.element.dispatchEvent(new CustomEvent("click", {detail: "NodeAttributeView"}));
-    } else if (focusName === "custom") {
-        dialog.element.dispatchEvent(new CustomEvent("click", {detail: "custom"}));
-    }
 };
 
 export const openAttr = (nodeElement: Element, focusName = "bookmark", protyle: IProtyle) => {

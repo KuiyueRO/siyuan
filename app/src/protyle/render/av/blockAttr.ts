@@ -19,6 +19,40 @@ import {Constants} from "../../../constants";
 import {getCompressURL} from "../../../util/image";
 import {BUILTIN_ATTR_VIEW_ID, isBuiltinGlobalAttrId, isWritableBuiltinGlobalAttrId} from "./globalAttr";
 
+export interface IAttrViewKeyMeta {
+    type: TAVCol;
+    name: string;
+    desc?: string;
+    icon?: string;
+    id: string;
+    gaId?: string;
+    options?: {
+        name: string;
+        color: string;
+    }[];
+    numberFormat?: string;
+    template?: string;
+    isCustomAttr?: boolean;
+}
+
+export interface IAttrViewValueEntry extends IAVCellValue {
+    keyID: string;
+    id: string;
+    blockID: string;
+}
+
+export interface IAttrViewKeyValuePair {
+    key: IAttrViewKeyMeta;
+    values: IAttrViewValueEntry[];
+}
+
+export interface IAttrViewTableResponse {
+    avID: string;
+    avName: string;
+    blockIDs: string[];
+    keyValues: IAttrViewKeyValuePair[];
+}
+
 const genAVRollupHTML = (value: IAVCellValue) => {
     let html = "";
     const dataValue: IAVCellDateValue = value[value.type as "date"];
@@ -170,33 +204,11 @@ const getBuiltinAttrPanelLabel = () => {
     return languages.blockAttrBuiltin || languages.globalAttr || languages.builtinAttrReadonly || languages.database || "Built-in attributes";
 };
 
-export const renderAVAttribute = (element: HTMLElement, id: string, protyle: IProtyle, cb?: (element: HTMLElement) => void) => {
+export const renderAVAttribute = (element: HTMLElement, id: string, protyle: IProtyle, cb?: (element: HTMLElement, tables?: IAttrViewTableResponse[]) => void) => {
     fetchPost("/api/av/getAttributeViewKeys", {id}, (response) => {
         let html = "";
-        response.data.forEach((table: {
-            keyValues: {
-                key: {
-                    type: TAVCol,
-                    name: string,
-                    desc: string,
-                    icon: string,
-                    id: string,
-                    options?: {
-                        name: string,
-                        color: string
-                    }[]
-                },
-                values: {
-                    keyID: string,
-                    id: string,
-                    blockID: string,
-                    type: TAVCol & IAVCellValue
-                }  []
-            }[],
-            blockIDs: string[],
-            avID: string
-            avName: string
-        }) => {
+        const tables = (response?.data || []) as IAttrViewTableResponse[];
+        tables.forEach((table) => {
             const isBuiltinView = table.avID === BUILTIN_ATTR_VIEW_ID;
             const avLabel = table.avName || (isBuiltinView ? getBuiltinAttrPanelLabel() : window.siyuan.languages.database);
             const removeAction = isBuiltinView ? "" : `<span data-type="remove" data-row-id="${table.keyValues && table.keyValues[0].values[0].blockID}" class="block__icon block__icon--warning block__icon--show b3-tooltips__w b3-tooltips" aria-label="${window.siyuan.languages.removeAV}"><svg><use xlink:href="#iconTrashcan"></use></svg></span>`;
@@ -478,7 +490,7 @@ class="fn__flex-1 fn__flex${["url", "text", "number", "email", "phone", "block"]
             });
         });
         if (cb) {
-            cb(element);
+            cb(element, tables);
         }
     });
 };

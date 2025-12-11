@@ -167,6 +167,7 @@ export abstract class Constants {
     public static readonly LOCAL_EMOJIS = "local-emojis";
     public static readonly LOCAL_MOVE_PATH = "local-move-path";
     public static readonly LOCAL_RECENT_DOCS = "local-recent-docs";
+    public static readonly LOCAL_ATTR_PANEL = "local-attr-panel";
 
     // dialog
     public static readonly DIALOG_CONFIRM = "dialog-confirm";
@@ -250,6 +251,7 @@ export abstract class Constants {
     public static readonly MENU_FROM_DOC_TREE_MORE_ITEMS = "tree-items"; // 侧栏文档树右键菜单，多个文档或笔记本
     public static readonly MENU_TAG = "tagMenu"; // 侧栏标签菜单
     public static readonly MENU_BOOKMARK = "bookmarkMenu"; // 侧栏书签菜单
+    public static readonly MENU_ATTR_PANEL_SORT = "attrPanelSort";
     public static readonly MENU_OUTLINE_CONTEXT = "outline-context"; // 大纲标题右键菜单
     public static readonly MENU_OUTLINE_EXPAND_LEVEL = "outline-expand-level"; // 大纲展开层级菜单
 
